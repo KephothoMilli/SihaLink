@@ -1,0 +1,39 @@
+{
+  "name": "afya_voice_geo_agent",
+  "description": "GPS-to-administrative-hierarchy enrichment and nearest health facility lookup with ETA calculation.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "enrich_encounter",
+      "description": "Enrich a clinical encounter with GPS-derived admin hierarchy (village/ward/sub-county/county) and nearest health facilities with driving ETAs.",
+      "parameters": {
+        "encounter_json": "object (required) — extracted clinical data",
+        "latitude": "float (required) — GPS latitude",
+        "longitude": "float (required) — GPS longitude"
+      },
+      "endpoint": "/tool/enrich_encounter",
+      "method": "POST",
+      "returns": {
+        "enriched_encounter": {
+          "location": {"type": "Point", "coordinates": ["lng", "lat"]},
+          "admin_hierarchy": {
+            "village": "string",
+            "ward": "string",
+            "sub_county": "string",
+            "county": "string"
+          },
+          "nearest_facilities": [
+            {
+              "name": "string",
+              "distance_km": "float",
+              "eta_minutes": "integer",
+              "open_now": "boolean",
+              "has_emergency": "boolean"
+            }
+          ],
+          "location_confidence": "high|low"
+        }
+      }
+    }
+  ]
+}

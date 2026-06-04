@@ -1,0 +1,113 @@
+<!-- Dashboard Component Template -->
+
+<div class="dashboard-container">
+  <div class="dashboard-header animate-fade-in">
+    <h2>National Surveillance Dashboard</h2>
+    <p>Real-time status of all clinical data intake and automated disease outbreak analysis agents.</p>
+  </div>
+
+  <!-- Swarm Status -->
+  <div class="dashboard-section swarm-status-section animate-fade-in" *ngIf="agentStatus$ | async as status">
+    <h3>Agent Operations Status</h3>
+    <div class="status-grid">
+      <div class="status-card" [class.healthy]="status.intake" routerLink="/agents/intake">
+        <div class="status-indicator"></div>
+        <div class="status-info">
+          <span class="label">Clinical Intake</span>
+          <span class="status-txt">{{ status.intake ? 'OPERATIONAL' : 'OFFLINE' }}</span>
+        </div>
+        <span class="icon">🎤</span>
+      </div>
+
+      <div class="status-card" [class.healthy]="status.geo" routerLink="/agents/geo">
+        <div class="status-indicator"></div>
+        <div class="status-info">
+          <span class="label">Geo Boundary</span>
+          <span class="status-txt">{{ status.geo ? 'OPERATIONAL' : 'OFFLINE' }}</span>
+        </div>
+        <span class="icon">📍</span>
+      </div>
+
+      <div class="status-card" [class.healthy]="status.data" routerLink="/agents/data">
+        <div class="status-indicator"></div>
+        <div class="status-info">
+          <span class="label">Atlas Database</span>
+          <span class="status-txt">{{ status.data ? 'OPERATIONAL' : 'OFFLINE' }}</span>
+        </div>
+        <span class="icon">💾</span>
+      </div>
+
+      <div class="status-card" [class.healthy]="status.notify" routerLink="/agents/notify">
+        <div class="status-indicator"></div>
+        <div class="status-info">
+          <span class="label">Dispatch Alerts</span>
+          <span class="status-txt">{{ status.notify ? 'OPERATIONAL' : 'OFFLINE' }}</span>
+        </div>
+        <span class="icon">📨</span>
+      </div>
+
+      <div class="status-card" [class.healthy]="status.surveillance" routerLink="/agents/surveillance">
+        <div class="status-indicator"></div>
+        <div class="status-info">
+          <span class="label">Surveillance</span>
+          <span class="status-txt">{{ status.surveillance ? 'OPERATIONAL' : 'OFFLINE' }}</span>
+        </div>
+        <span class="icon">📊</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Navigation Directory -->
+  <div class="dashboard-section agents-section animate-fade-in">
+    <h3>Swarm Agents Directory</h3>
+    <div class="agents-directory-grid">
+      <a *ngFor="let agent of agents" [routerLink]="agent.route" class="directory-agent-card">
+        <div class="agent-avatar">{{ agent.icon }}</div>
+        <div class="agent-details">
+          <h4>{{ agent.name }}</h4>
+          <p>{{ agent.description }}</p>
+        </div>
+        <span class="arrow-indicator">→</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Active Session Monitoring -->
+  <div class="dashboard-section active-sessions-section animate-fade-in">
+    <h3>Active Clinical Sessions</h3>
+    
+    <div *ngIf="activeSessions.length > 0" class="sessions-list">
+      <div
+        *ngFor="let session of activeSessions"
+        class="session-monitor-card"
+        [style.border-left-color]="getStateColor(session.state)"
+      >
+        <div class="session-monitor-header">
+          <h4>Session: <code>{{ session.sessionId }}</code></h4>
+          <span class="state-badge" [style.background-color]="getStateColor(session.state) + '15'" [style.color]="getStateColor(session.state)">
+            {{ session.state }}
+          </span>
+        </div>
+
+        <div class="workflow-progress">
+          <div class="progress-info">
+            <span class="lbl">Workflow Pipeline:</span>
+            <span class="pct">{{ getStateProgress(session.state) }}% complete</span>
+          </div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" [style.width.%]="getStateProgress(session.state)" [style.background-color]="getStateColor(session.state)"></div>
+          </div>
+        </div>
+
+        <div class="session-meta">
+          <p><strong>Started:</strong> {{ session.timestamp | date: 'medium' }}</p>
+          <p *ngIf="session.error" class="error-msg">⚠️ Failed Step: {{ session.error }}</p>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="activeSessions.length === 0" class="empty-sessions-card">
+      <p>No active case encounters currently running in the swarm pipeline.</p>
+    </div>
+  </div>
+</div>

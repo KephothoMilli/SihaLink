@@ -1,0 +1,162 @@
+<!-- Geo Agent UI Template -->
+
+<div class="geo-agent-container">
+  <div class="agent-title-section">
+    <span class="agent-badge">Geo Agent</span>
+    <h2>Geographic Enrichment Portal</h2>
+    <p class="description">
+      Enrich clinical logs with geographic boundaries and estimate travel time to the closest health facilities.
+    </p>
+  </div>
+
+  <div class="error-message animate-fade-in" *ngIf="error">
+    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
+  </div>
+
+  <!-- Form card for coordinates -->
+  <div class="location-card">
+    <h3>GPS Configuration</h3>
+    <div class="location-inputs">
+      <div class="input-group">
+        <label>Latitude</label>
+        <div class="input-wrapper">
+          <span class="input-icon">🌐</span>
+          <input type="number" [(ngModel)]="latitude" step="0.0001" />
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label>Longitude</label>
+        <div class="input-wrapper">
+          <span class="input-icon">🌐</span>
+          <input type="number" [(ngModel)]="longitude" step="0.0001" />
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label>Search Radius (km)</label>
+        <div class="input-wrapper">
+          <span class="input-icon">📐</span>
+          <input type="number" [(ngModel)]="radius_km" min="1" max="100" />
+        </div>
+      </div>
+    </div>
+
+    <div class="action-buttons">
+      <button (click)="getCurrentLocation()" class="btn btn-secondary-gps">
+        📍 Get Current GPS Location
+      </button>
+      <button (click)="findNearestFacilities()" [disabled]="isLoading" class="btn btn-primary">
+        {{ isLoading ? '⏳ Searching...' : '🏥 Find Facilities' }}
+      </button>
+      <button (click)="getAdminHierarchy()" [disabled]="isLoading" class="btn btn-info">
+        {{ isLoading ? '⏳ Loading Hierarchy...' : '🗺️ Get Location Boundaries' }}
+      </button>
+    </div>
+  </div>
+
+  <div class="geo-results-layout">
+    <!-- Boundaries / Admin Hierarchy Card -->
+    <div class="report-card boundaries-card animate-fade-in" *ngIf="adminHierarchy">
+      <div class="card-body">
+        <h4>Administrative Boundaries</h4>
+        <p class="section-hint">Hierarchy boundaries resolved from the coordinates:</p>
+        <div class="boundaries-timeline">
+          <div class="timeline-step" *ngIf="adminHierarchy.county">
+            <span class="bubble">County</span>
+            <span class="val">{{ adminHierarchy.county }}</span>
+          </div>
+          <div class="timeline-step" *ngIf="adminHierarchy.sub_county">
+            <span class="bubble">Sub-County</span>
+            <span class="val">{{ adminHierarchy.sub_county }}</span>
+          </div>
+          <div class="timeline-step" *ngIf="adminHierarchy.ward">
+            <span class="bubble">Ward</span>
+            <span class="val">{{ adminHierarchy.ward }}</span>
+          </div>
+          <div class="timeline-step" *ngIf="adminHierarchy.district">
+            <span class="bubble">District</span>
+            <span class="val">{{ adminHierarchy.district }}</span>
+          </div>
+          <div class="timeline-step" *ngIf="adminHierarchy.village">
+            <span class="bubble">Village</span>
+            <span class="val">{{ adminHierarchy.village }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Health Facilities Column -->
+    <div class="facilities-section animate-fade-in" *ngIf="facilities.length > 0">
+      <div class="facilities-header">
+        <h3>Nearest Health Facilities</h3>
+        <p class="section-hint">Click on a facility to view contact details and calculate ETA:</p>
+      </div>
+
+      <div class="facilities-grid">
+        <div
+          class="facility-card"
+          *ngFor="let facility of facilities"
+          (click)="selectFacility(facility)"
+          [class.selected]="selectedFacility?.name === facility.name"
+        >
+          <div class="facility-main">
+            <div class="facility-icon">🏥</div>
+            <div class="facility-info">
+              <h4>{{ facility.name }}</h4>
+              <span class="facility-type-badge">{{ facility.type }}</span>
+            </div>
+          </div>
+          <div class="facility-meta-grid">
+            <div class="meta-item">
+              <span class="lbl">Distance</span>
+              <span class="val">{{ facility.distance_km.toFixed(1) }} km</span>
+            </div>
+            <div class="meta-item" *ngIf="facility.eta_minutes">
+              <span class="lbl">Est. ETA</span>
+              <span class="valHighlight">{{ facility.eta_minutes }} mins</span>
+            </div>
+            <div class="meta-item transport-status" *ngIf="facility.has_transport">
+              <span class="lbl">Transport</span>
+              <span class="valSuccess">Available</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Selected Facility Card Details -->
+    <div class="report-card selected-facility-card animate-fade-in" *ngIf="selectedFacility">
+      <div class="card-body">
+        <div class="selected-header">
+          <span class="pill-selected">Selected Facility</span>
+          <button (click)="clearSelection()" class="btn-clear-selection">✕ Close</button>
+        </div>
+        <h4>{{ selectedFacility.name }}</h4>
+        
+        <div class="facility-detail-rows">
+          <div class="detail-row">
+            <span class="label">Level / Type:</span>
+            <span class="value">{{ selectedFacility.type }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Direct Distance:</span>
+            <span class="value">{{ selectedFacility.distance_km.toFixed(1) }} km</span>
+          </div>
+          <div class="detail-row" *ngIf="selectedFacility.eta_minutes">
+            <span class="label">Estimated Travel ETA:</span>
+            <span class="valueHighlight">{{ selectedFacility.eta_minutes }} mins</span>
+          </div>
+          <div class="detail-row" *ngIf="selectedFacility.contact">
+            <span class="label">Emergency Contact:</span>
+            <span class="value select-text">📞 {{ selectedFacility.contact }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="no-results" *ngIf="!isLoading && facilities.length === 0 && !error">
+    <p>Use coordinates to find nearest hospitals, clinics, or dispensaries.</p>
+  </div>
+</div>

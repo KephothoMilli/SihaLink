@@ -1,0 +1,54 @@
+# ── Internal docs & planning (not for repo) ──────────────────────────────────
+CLAUDE.md
+DEPLOYMENT_GUIDE.md
+DEPLOYMENT_PLAN.md
+IDEA.md
+implementation_plan.md
+MONGODB_TROUBLESHOOTING.md
+QUICK_START_DEV.md
+SKILLS.md
+agents/data/README.md
+agents/geo/README.md
+agents/intake/README.md
+agents/orchestrator/README.md
+frontend/ARCHITECTURE.md
+frontend/INTEGRATION_GUIDE.md
+frontend/QUICKSTART.md
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# ── Node / Angular ────────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.angular/cache/
+agents/notify/dist/
+
+# ── MongoDB ADK session state ─────────────────────────────────────────────────
+**/.adk/session.db
+**/.adk/artifacts/
+
+# ── Google Cloud / Firebase ───────────────────────────────────────────────────
+.firebaserc
+.google/
+
+# ── OS & editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+*.swp
+*.swo

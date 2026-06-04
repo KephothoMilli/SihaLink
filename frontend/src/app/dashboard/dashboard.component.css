@@ -1,0 +1,320 @@
+/* Dashboard CSS styling */
+
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.dashboard-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dashboard-header h2 {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+
+.dashboard-header p {
+  color: var(--color-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 720px;
+}
+
+.dashboard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.dashboard-section h3 {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--color-text);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+/* Operational Status Grid */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.25rem;
+}
+
+.status-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.status-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: #cbd5e1;
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--color-red);
+  box-shadow: 0 0 0 2px rgba(225, 29, 72, 0.2);
+  flex-shrink: 0;
+}
+
+.status-card.healthy .status-indicator {
+  background-color: var(--color-green);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+}
+
+.status-info .label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.status-info .status-txt {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: var(--color-muted);
+  letter-spacing: 0.05em;
+}
+
+.status-card.healthy .status-txt {
+  color: var(--color-green);
+}
+
+.status-card:not(.healthy) .status-txt {
+  color: var(--color-red);
+}
+
+.status-card .icon {
+  font-size: 1.5rem;
+  opacity: 0.15;
+  transition: opacity 0.2s;
+}
+
+.status-card:hover .icon {
+  opacity: 0.8;
+}
+
+/* Available Agents Directory List */
+.agents-directory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+}
+
+.directory-agent-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  text-decoration: none;
+  color: inherit;
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+}
+
+.directory-agent-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.agent-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-primary-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.agent-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.agent-details h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--color-text);
+}
+
+.agent-details p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  line-height: 1.4;
+}
+
+.arrow-indicator {
+  font-size: 1.1rem;
+  color: var(--color-muted);
+  transition: transform 0.2s ease;
+}
+
+.directory-agent-card:hover .arrow-indicator {
+  transform: translateX(4px);
+  color: var(--color-primary);
+}
+
+/* Active Workflows Timeline Cards */
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.session-monitor-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 6px solid var(--color-secondary);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.session-monitor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.session-monitor-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.session-monitor-header code {
+  background-color: #f1f5f9;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+
+.state-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 0.15rem 0.625rem;
+  border-radius: 9999px;
+  letter-spacing: 0.05em;
+}
+
+.workflow-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.progress-info .lbl {
+  color: var(--color-muted);
+}
+
+.progress-info .pct {
+  color: var(--color-text);
+}
+
+.progress-bar-track {
+  height: 8px;
+  background-color: #f1f5f9;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.3s ease-out;
+}
+
+.session-meta {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.875rem;
+}
+
+.session-meta p {
+  margin: 0;
+}
+
+.error-msg {
+  color: var(--color-red) !important;
+  font-weight: 600;
+}
+
+.empty-sessions-card {
+  text-align: center;
+  color: var(--color-muted);
+  padding: 3rem 1.5rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: 0.9rem;
+  font-style: italic;
+  box-shadow: var(--shadow);
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}

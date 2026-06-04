@@ -1,0 +1,152 @@
+<!-- Notify Agent UI Template -->
+
+<div class="notify-agent-container">
+  <div class="agent-title-section">
+    <span class="agent-badge">Notify Agent</span>
+    <h2>Alert Notification Portal</h2>
+    <p class="description">
+      Dispatch urgent outbreak alerts and referral instructions to health professionals, community heads, or supervisors via Telegram and SMS alerts.
+    </p>
+  </div>
+
+  <div class="error-message animate-fade-in" *ngIf="error">
+    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
+  </div>
+
+  <div class="notify-split-layout">
+    <!-- Left Column: Form & History -->
+    <div class="forms-column">
+      <!-- Send Alert Card -->
+      <div class="action-card dispatch-card">
+        <h3>Dispatch Outbreak Alert</h3>
+        <p class="section-hint">Sends live alerts across Telegram channels & SMS integrations:</p>
+        
+        <div class="notify-form">
+          <div class="form-group">
+            <label>Alert Title</label>
+            <input type="text" [(ngModel)]="notificationTitle" placeholder="e.g., Acute Syndromic Spike detected" />
+          </div>
+
+          <div class="form-group">
+            <label>Detailed Instruction Message</label>
+            <textarea [(ngModel)]="notificationMessage" placeholder="Provide clinical steps or referral details..." rows="4"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Recipients (Comma-separated phone numbers or Telegram Chat IDs)</label>
+            <textarea [(ngModel)]="recipients" placeholder="e.g., Worker-001, Supervisor-002, +254712345678" rows="2"></textarea>
+          </div>
+
+          <div class="form-row-group">
+            <div class="form-group">
+              <label>Alert Priority Level</label>
+              <select [(ngModel)]="priority">
+                <option value="low">🟢 Low (Routine Update)</option>
+                <option value="medium">🟡 Medium (Increased Surveillance)</option>
+                <option value="high">🟠 High (Critical Local Spike)</option>
+                <option value="critical">🔴 Critical (Immediate Outbreak Referral)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Linked Encounter ID (Optional)</label>
+              <input type="text" [(ngModel)]="encounterId" placeholder="e.g., encounter-12345" />
+            </div>
+          </div>
+
+          <button (click)="sendNotification()" [disabled]="isLoading" class="btn btn-dispatch">
+            {{ isLoading ? '⏳ Dispatching Alert...' : '📨 Dispatch Alert Notification' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Result Card -->
+      <div class="results-section result-success animate-fade-in" *ngIf="notificationResult">
+        <div class="results-header">
+          <h3>Alert Dispatched Successfully</h3>
+          <button (click)="clearResults()" class="btn-clear">✕ Clear</button>
+        </div>
+
+        <div class="notification-receipt">
+          <div class="receipt-row">
+            <span class="label">Dispatch Status:</span>
+            <span class="value-badge" [class]="getPriorityColor(notificationResult.status)">
+              {{ notificationResult.status || 'Delivered' }}
+            </span>
+          </div>
+          <div class="receipt-row">
+            <span class="label">Recipients Reached:</span>
+            <span class="value">{{ notificationResult.recipients_reached }}</span>
+          </div>
+          <div class="receipt-row" *ngIf="notificationResult.failed_recipients && notificationResult.failed_recipients.length > 0">
+            <span class="label">Failed Recipients:</span>
+            <span class="valueFailed">{{ notificationResult.failed_recipients.join(', ') }}</span>
+          </div>
+          <div class="receipt-row">
+            <span class="label">Dispatched Time:</span>
+            <span class="value">{{ notificationResult.sent_at | date: 'medium' }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Registered Recipients -->
+    <div class="recipients-column">
+      <div class="results-section recipients-card">
+        <div class="results-header">
+          <h3>Registered Recipients</h3>
+          <button (click)="showRegistration = !showRegistration" class="btn-add-worker">
+            {{ showRegistration ? '✕ Cancel' : '➕ Register New' }}
+          </button>
+        </div>
+
+        <!-- Registration Dropdown Form -->
+        <div class="registration-panel animate-fade-in" *ngIf="showRegistration">
+          <h4>Register Recipient</h4>
+          <div class="registration-form">
+            <div class="form-group">
+              <label>Name</label>
+              <input type="text" [(ngModel)]="newRecipientName" placeholder="Worker full name" />
+            </div>
+            <div class="form-group">
+              <label>Professional Role</label>
+              <input type="text" [(ngModel)]="newRecipientRole" placeholder="e.g., Sub-County Health Director" />
+            </div>
+            <div class="form-group">
+              <label>Telegram Chat ID</label>
+              <input type="text" [(ngModel)]="newRecipientTelegramId" placeholder="e.g., 987654321" />
+            </div>
+            <div class="form-group">
+              <label>Phone Number (SMS)</label>
+              <input type="text" [(ngModel)]="newRecipientPhone" placeholder="e.g., +254712345678" />
+            </div>
+            <button (click)="registerRecipient()" [disabled]="isLoading" class="btn btn-save-worker">
+              {{ isLoading ? 'Saving...' : '✓ Save Contact' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Recipients Profile Cards Grid -->
+        <div class="recipients-grid">
+          <div class="recipient-profile-card" *ngFor="let recipient of registeredRecipients">
+            <div class="profile-avatar">
+              {{ recipient.name.charAt(0) }}
+            </div>
+            <div class="profile-info">
+              <h4>{{ recipient.name }}</h4>
+              <span class="profile-role">{{ recipient.role }}</span>
+              <div class="profile-details">
+                <span class="tag" *ngIf="recipient.telegram_id">💬 ID: {{ recipient.telegram_id }}</span>
+                <span class="tag" *ngIf="recipient.phone_number">📞 {{ recipient.phone_number }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="no-recipients" *ngIf="registeredRecipients.length === 0">
+            <p>No registered contacts. Click "Register New" to build health network registry.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

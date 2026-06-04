@@ -1,0 +1,60 @@
+{
+  "name": "afya_voice_surveillance_agent",
+  "description": "Outbreak detection using MongoDB aggregation pipelines, vector similarity search, rolling baseline comparison, and multi-syndrome correlation.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "run_outbreak_detection",
+      "description": "Run geospatial cluster pipeline for a county. Compares against 4-week rolling baselines. Returns alerts for any detected outbreaks.",
+      "parameters": {
+        "county": "string (required)",
+        "lat": "float (required)",
+        "lng": "float (required)",
+        "hours": "integer (optional, default 6)"
+      },
+      "endpoint": "/tool/run_outbreak_detection",
+      "method": "POST",
+      "returns": {
+        "county": "string",
+        "alerts_detected": "integer",
+        "alerts": "array[AlertDocument]"
+      }
+    },
+    {
+      "name": "run_vector_search",
+      "description": "Atlas Vector Search for semantically similar cases within 50km. Requires vector_index on encounters.embedding.",
+      "parameters": {
+        "query_vector": "array[float] (required) — 768-dim embedding",
+        "lat": "float (required)",
+        "lng": "float (required)"
+      },
+      "endpoint": "/tool/run_vector_search",
+      "method": "POST"
+    },
+    {
+      "name": "update_baselines",
+      "description": "Recalculate 4-week rolling baselines for each syndrome per county. Stores in baselines collection.",
+      "parameters": {
+        "county": "string (optional) — if omitted, updates all counties"
+      },
+      "endpoint": "/tool/update_baselines",
+      "method": "POST"
+    },
+    {
+      "name": "create_vector_index",
+      "description": "Idempotent: creates the Atlas Vector Search index on encounters.embedding.",
+      "parameters": {},
+      "endpoint": "/tool/create_vector_index",
+      "method": "POST"
+    },
+    {
+      "name": "get_county_stats",
+      "description": "Quick stats for a county: encounters today, active alerts.",
+      "parameters": {
+        "county": "string (required)"
+      },
+      "endpoint": "/tool/get_county_stats",
+      "method": "POST"
+    }
+  ]
+}

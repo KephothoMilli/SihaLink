@@ -1,0 +1,35 @@
+# ── Web framework ──────────────────────────────────────────────────────────────
+# google-adk 1.26.0 requires fastapi>=0.124.1
+fastapi>=0.124.1,<1.0.0
+uvicorn[standard]>=0.32.0,<1.0.0
+
+# ── MongoDB ────────────────────────────────────────────────────────────────────
+# Do NOT add standalone `bson` — pymongo bundles its own; they conflict.
+# Use the `[srv]` extra for mongodb+srv:// URIs (Atlas DNS SRV lookups).
+# Reference: https://github.com/mongodb/sample-app-python-mflix
+pymongo[srv]==4.17.0
+motor==3.7.1
+
+# ── Google AI / ADK ────────────────────────────────────────────────────────────
+# Pin google-adk; let pip resolve google-genai to the compatible version.
+# google-adk 1.26.0 requires google-genai>=1.56.0,<2.0.0
+google-adk==1.26.0
+
+# ── Voyage AI (MongoDB recommended embedding partner) ──────────────────────────
+# Primary: voyage-4 (1024 dims, multilingual). Fallback: Google text-embedding-004.
+# voyageai>=0.3.3 supports Python 3.13+
+voyageai==0.3.7
+
+# ── Google Maps ────────────────────────────────────────────────────────────────
+googlemaps==4.10.0
+
+# ── HTTP clients ───────────────────────────────────────────────────────────────
+# google-genai requires httpx>=0.28.1; let pip pick the right version.
+httpx>=0.28.1,<1.0.0
+aiohttp>=3.11.0,<4.0.0
+
+# ── Data validation ────────────────────────────────────────────────────────────
+pydantic>=2.10.0,<3.0.0
+
+# ── Environment ────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1

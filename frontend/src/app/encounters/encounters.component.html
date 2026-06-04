@@ -1,0 +1,86 @@
+<!-- Encounters Component Template -->
+
+<div class="encounters-container">
+  <div class="page-header animate-fade-in">
+    <h2>Processed Case Encounters Log</h2>
+    <p>Chronological registry of clinical encounters ingested and enriched by the swarm agents.</p>
+  </div>
+
+  <div class="encounters-list animate-fade-in" *ngIf="encounters.length > 0">
+    <div class="encounter-item-card animate-fade-in" *ngFor="let encounter of encounters">
+      <div class="encounter-card-header">
+        <div class="session-info">
+          <span class="pulse-indicator-dot" [style.background-color]="getStateColor(encounter.state)"></span>
+          <h3>Case ID: <code>{{ encounter.sessionId }}</code></h3>
+        </div>
+        <span class="state-outline-badge" [style.color]="getStateColor(encounter.state)" [style.border-color]="getStateColor(encounter.state) + '30'" [style.background-color]="getStateColor(encounter.state) + '05'">
+          {{ encounter.state }}
+        </span>
+      </div>
+
+      <div class="encounter-card-body">
+        <p class="timestamp">🕒 <strong>Registered:</strong> {{ encounter.timestamp | date: 'medium' }}</p>
+        <p *ngIf="encounter.error" class="error-banner">⚠️ Failed pipeline step: {{ encounter.error }}</p>
+
+        <!-- Dynamic Grid of agent enrichment -->
+        <div class="enrichment-grid">
+          <!-- Step 1: Intake -->
+          <div class="enrich-column" *ngIf="encounter.data.extraction">
+            <div class="col-header">
+              <span class="icon">🎤</span>
+              <h4>Intake Agent</h4>
+            </div>
+            <div class="col-body">
+              <p *ngIf="encounter.data.extraction.symptoms">
+                <strong>Symptoms:</strong>
+                <span class="tag-mini" *ngFor="let s of encounter.data.extraction.symptoms">{{ s }}</span>
+              </p>
+              <p *ngIf="encounter.data.extraction.clinical_assessment" class="assessment-txt">
+                <strong>Assessment:</strong> {{ encounter.data.extraction.clinical_assessment }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 2: Geo -->
+          <div class="enrich-column" *ngIf="encounter.data.geoEnriched">
+            <div class="col-header">
+              <span class="icon">📍</span>
+              <h4>Geo Agent</h4>
+            </div>
+            <div class="col-body">
+              <p *ngIf="encounter.data.geoEnriched.admin_hierarchy">
+                <strong>Location Center:</strong> 
+                {{ encounter.data.geoEnriched.admin_hierarchy.ward || 'Unknown' }} Ward, 
+                {{ encounter.data.geoEnriched.admin_hierarchy.county || 'Unknown' }} County
+              </p>
+              <p *ngIf="encounter.data.geoEnriched.recommended_facility">
+                <strong>Referral Hospital:</strong> 🏥 {{ encounter.data.geoEnriched.recommended_facility.name }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 3: Notify -->
+          <div class="enrich-column" *ngIf="encounter.data.notifications && encounter.data.notifications.length > 0">
+            <div class="col-header">
+              <span class="icon">📨</span>
+              <h4>Notify Agent</h4>
+            </div>
+            <div class="col-body">
+              <p class="notify-count">✓ {{ encounter.data.notifications.length }} alert(s) dispatched to local clinic networks</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="encounter-card-footer">
+        <button (click)="clearSession(encounter.sessionId)" class="btn btn-delete-log">
+          🗑️ Remove Case Log
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="empty-encounters-card animate-fade-in" *ngIf="encounters.length === 0">
+    <p>No encounters registered yet. Incidents will appear here chronologically once recorded by the Intake Agent.</p>
+  </div>
+</div>

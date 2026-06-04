@@ -1,0 +1,139 @@
+<!-- Root App Component Template - Angular 23 -->
+
+<div class="app-container">
+  <header class="app-header">
+    <div class="header-brand" (click)="navigateTo('/dashboard')">
+      <div class="brand-icon">🏥</div>
+      <div class="brand-info">
+        <h1>SihaLink</h1>
+        <p>Kenya National Disease Surveillance Swarm</p>
+      </div>
+    </div>
+
+    <!-- Live Sync / Offline Status -->
+    <div class="sync-status">
+      <span class="sync-badge" [class.online]="isOnline" [class.offline]="!isOnline">
+        <span class="pulse-dot" *ngIf="isOnline"></span>
+        {{ isOnline ? 'CONNECTED' : 'OFFLINE' }}
+        <span class="queue-count" *ngIf="offlineQueueSize > 0">
+          {{ offlineQueueSize }} queued
+        </span>
+      </span>
+    </div>
+
+    <button class="menu-toggle" (click)="toggleMenu()" [class.active]="isMenuOpen">
+      ☰
+    </button>
+  </header>
+
+  <!-- Agent Health status bar -->
+  <div class="agent-pills-bar" *ngIf="agentStatus$ | async as status">
+    <span class="bar-title">Swarm Health:</span>
+    <span class="agent-pill-health" [class.healthy]="status.intake" (click)="navigateTo('/agents/intake')">
+      <span class="indicator-dot"></span> 🎤 Intake
+    </span>
+    <span class="agent-pill-health" [class.healthy]="status.geo" (click)="navigateTo('/agents/geo')">
+      <span class="indicator-dot"></span> 📍 Geo
+    </span>
+    <span class="agent-pill-health" [class.healthy]="status.data" (click)="navigateTo('/agents/data')">
+      <span class="indicator-dot"></span> 💾 Data
+    </span>
+    <span class="agent-pill-health" [class.healthy]="status.notify" (click)="navigateTo('/agents/notify')">
+      <span class="indicator-dot"></span> 📨 Notify
+    </span>
+    <span class="agent-pill-health" [class.healthy]="status.surveillance" (click)="navigateTo('/agents/surveillance')">
+      <span class="indicator-dot"></span> 📊 Surveillance
+    </span>
+  </div>
+
+  <div class="app-layout">
+    <nav class="sidebar-nav" [class.active]="isMenuOpen">
+      <a (click)="navigateTo('/dashboard')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">🖥️</span> Dashboard
+      </a>
+
+      <div class="nav-divider">Swarm Agents</div>
+
+      <a (click)="navigateTo('/agents/intake')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">🎤</span> Intake Agent
+      </a>
+      <a (click)="navigateTo('/agents/geo')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">📍</span> Geo Agent
+      </a>
+      <a (click)="navigateTo('/agents/data')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">💾</span> Data Agent
+      </a>
+      <a (click)="navigateTo('/agents/notify')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">📨</span> Notify Agent
+      </a>
+      <a (click)="navigateTo('/agents/surveillance')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">📊</span> Surveillance
+      </a>
+
+      <div class="nav-divider">Database Logs</div>
+
+      <a (click)="navigateTo('/encounters')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">📋</span> Case Encounters
+      </a>
+    </nav>
+
+    <main class="content-area">
+      <router-outlet></router-outlet>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <p>&copy; 2026 SihaLink Swarm. Powered by Google ADK & Gemini API.</p>
+  </footer>
+
+  <!-- Frosted Glass Decision Gate Modal -->
+  <div class="gate-overlay animate-fade-in" *ngIf="gateSession">
+    <div class="gate-modal" [class.red]="gateSession.data.geoEnriched?.alert_needed"
+      [class.yellow]="!gateSession.data.geoEnriched?.alert_needed">
+      <div class="gate-header">
+        <span class="gate-triage-badge">
+          {{ gateSession.data.geoEnriched?.alert_needed ? 'CRITICAL ALERT' : 'PENDING APPROVAL' }}
+        </span>
+        <h2>Clinical Gate Authorization</h2>
+        <p class="session-label">Session ID: <code>{{ gateSession.sessionId }}</code></p>
+      </div>
+
+      <div class="gate-body">
+        <p class="gate-summary">
+          An encounter is pending manual confirmation. Verify the clinical and geographic details below before
+          dispatching notifications to community health networks.
+        </p>
+
+        <div class="gate-preview-card">
+          <div class="preview-item">
+            <span class="label">Symptoms Detected:</span>
+            <span class="value">{{ gateSession.data.extraction?.symptoms?.join(', ') || 'None' }}</span>
+          </div>
+          <div class="preview-item" *ngIf="gateSession.data.extraction?.vitals">
+            <span class="label">Key Vitals:</span>
+            <span class="value">
+              Temp: {{ gateSession.data.extraction.vitals.temperature || 'N/A' }}°C |
+              BP: {{ gateSession.data.extraction.vitals.blood_pressure || 'N/A' }}
+            </span>
+          </div>
+          <div class="preview-item" *ngIf="gateSession.data.geoEnriched?.admin_hierarchy">
+            <span class="label">Location Details:</span>
+            <span class="value">
+              {{ gateSession.data.geoEnriched.admin_hierarchy.ward || 'Unknown' }} Ward,
+              {{ gateSession.data.geoEnriched.admin_hierarchy.county || 'Unknown' }} County
+            </span>
+          </div>
+          <div class="preview-item" *ngIf="gateSession.data.geoEnriched?.recommended_facility">
+            <span class="label">Target Facility:</span>
+            <span class="valueHighlight">{{ gateSession.data.geoEnriched.recommended_facility.name }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="gate-actions">
+        <button (click)="confirmGate(true)" class="btn-confirm">✓ Approve & Dispatch</button>
+        <button (click)="confirmGate(false)" class="btn-decline">✕ Decline / Reject</button>
+      </div>
+    </div>
+  </div>
+</div>

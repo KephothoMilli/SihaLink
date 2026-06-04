@@ -1,0 +1,96 @@
+{
+    "name": "afya_voice_orchestrator",
+    "description": "Google Cloud Agent Builder compatible orchestrator service for SihaLink.",
+    "version": "0.1.0",
+    "tools": [
+        {
+            "name": "start_encounter",
+            "description": "Initialize an encounter session and start the orchestrator lifecycle.",
+            "parameters": {
+                "session_id": "string",
+                "audio_base64": "string",
+                "latitude": "float",
+                "longitude": "float"
+            },
+            "endpoint": "/tool/start_encounter",
+            "method": "POST"
+        },
+        {
+            "name": "route_to_intake",
+            "description": "Send base64 audio to the Intake Agent for multilingual clinical extraction.",
+            "parameters": {
+                "session_id": "string",
+                "audio_base64": "string"
+            },
+            "endpoint": "/tool/route_to_intake",
+            "method": "POST"
+        },
+        {
+            "name": "route_to_geo",
+            "description": "Send extracted encounter and GPS coordinates to the Geo Agent for location enrichment.",
+            "parameters": {
+                "encounter_json": "object",
+                "latitude": "float",
+                "longitude": "float"
+            },
+            "endpoint": "/tool/route_to_geo",
+            "method": "POST"
+        },
+        {
+            "name": "route_to_data",
+            "description": "Store a geo-enriched encounter in MongoDB via the Data Agent.",
+            "parameters": {
+                "enriched_encounter": "object"
+            },
+            "endpoint": "/tool/route_to_data",
+            "method": "POST"
+        },
+        {
+            "name": "request_human_decision",
+            "description": "Pause for CHV confirmation before sending a referral or alert.",
+            "parameters": {
+                "decision_type": "string",
+                "summary": "string",
+                "timeout_seconds": "integer"
+            },
+            "endpoint": "/tool/request_human_decision",
+            "method": "POST"
+        },
+        {
+            "name": "route_to_notify",
+            "description": "Send an alert/referral payload to the Notify Agent for Telegram delivery.",
+            "parameters": {
+                "notification_type": "string",
+                "payload": "object"
+            },
+            "endpoint": "/tool/route_to_notify",
+            "method": "POST"
+        },
+        {
+            "name": "trigger_surveillance",
+            "description": "Trigger an outbreak surveillance run or schedule the next detection cycle.",
+            "parameters": {
+                "county": "string",
+                "immediate": "boolean"
+            },
+            "endpoint": "/tool/trigger_surveillance",
+            "method": "POST"
+        },
+        {
+            "name": "queue_offline_encounter",
+            "description": "Store an encounter locally in the offline queue for later sync.",
+            "parameters": {
+                "encounter_json": "object"
+            },
+            "endpoint": "/tool/queue_offline_encounter",
+            "method": "POST"
+        },
+        {
+            "name": "process_offline_queue",
+            "description": "Process all queued offline encounters when connectivity returns.",
+            "parameters": {},
+            "endpoint": "/tool/process_offline_queue",
+            "method": "POST"
+        }
+    ]
+}

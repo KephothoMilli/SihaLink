@@ -1,0 +1,193 @@
+<!-- Intake Agent UI Template -->
+
+<div class="intake-agent-container">
+  <div class="agent-title-section">
+    <span class="agent-badge">Intake Agent</span>
+    <h2>Clinical Data Intake Portal</h2>
+    <p class="description">
+      Record patient symptoms in Dholuo, Swahili, Kikuyu, Somali, or English. Gemini AI will analyze the speech to extract clinical assessments, vitals, and recommended triage.
+    </p>
+  </div>
+
+  <div class="error-message animate-fade-in" *ngIf="error">
+    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
+  </div>
+
+  <!-- Recording Interface -->
+  <div class="recording-section animate-fade-in" *ngIf="!extractionResult">
+    <div class="recorder-card">
+      <div class="pulse-wrapper" *ngIf="isRecording">
+        <div class="voice-wave">
+          <span class="stroke"></span>
+          <span class="stroke"></span>
+          <span class="stroke"></span>
+          <span class="stroke"></span>
+          <span class="stroke"></span>
+          <span class="stroke"></span>
+          <span class="stroke"></span>
+        </div>
+        <p class="timer">{{ getRecordingTimeDisplay() }}</p>
+      </div>
+
+      <div class="recorder-icon-static" *ngIf="!isRecording && !audioBlob">
+        🎤
+      </div>
+
+      <div class="recorded-success-icon" *ngIf="audioBlob && !isRecording">
+        ✓ Audio Captured
+      </div>
+
+      <div class="recorder-controls">
+        <button
+          *ngIf="!isRecording"
+          [disabled]="isProcessing"
+          (click)="startRecording()"
+          class="btn btn-record"
+        >
+          Start Recording
+        </button>
+        <button
+          *ngIf="isRecording"
+          (click)="stopRecording()"
+          class="btn btn-stop animate-pulse"
+        >
+          ⏹ Stop Recording
+        </button>
+      </div>
+
+      <div class="submit-action" *ngIf="audioBlob && !isRecording">
+        <button
+          [disabled]="isProcessing"
+          (click)="processAudio()"
+          class="btn btn-process-trigger"
+        >
+          {{ isProcessing ? '⏳ Analyzing Speech...' : '⚡ Process Audio' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results Interface -->
+  <div class="extraction-result animate-fade-in" *ngIf="extractionResult">
+    <div class="result-header">
+      <h3>Clinical Report</h3>
+      <div class="confidence-pill">
+        <span class="label">AI Confidence:</span>
+        <span class="val">{{ (extractionResult.confidence_score * 100).toFixed(0) }}%</span>
+      </div>
+    </div>
+
+    <!-- Layout Grid -->
+    <div class="results-grid">
+      <!-- Left Column -->
+      <div class="results-main">
+        <!-- Symptoms -->
+        <div class="report-card">
+          <div class="card-icon">🩺</div>
+          <div class="card-body">
+            <h4>Primary Symptoms</h4>
+            <div class="symptoms-list">
+              <span class="symptom-tag" *ngFor="let symptom of extractionResult.symptoms">
+                {{ symptom }}
+              </span>
+              <span class="symptom-empty" *ngIf="!extractionResult.symptoms || extractionResult.symptoms.length === 0">
+                No acute symptoms explicitly recorded
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Assessment -->
+        <div class="report-card">
+          <div class="card-icon">📋</div>
+          <div class="card-body">
+            <h4>Clinical Assessment Summary</h4>
+            <p class="assessment-text">{{ extractionResult.clinical_assessment }}</p>
+          </div>
+        </div>
+
+        <!-- Recommended Actions -->
+        <div class="report-card">
+          <div class="card-icon">⚡</div>
+          <div class="card-body">
+            <h4>Recommended Protocols</h4>
+            <ul class="protocols-list">
+              <li *ngFor="let action of extractionResult.recommended_actions">
+                {{ action }}
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column -->
+      <div class="results-side">
+        <!-- Vitals Grid -->
+        <div class="report-card vitals-container">
+          <div class="card-body">
+            <h4>Patient Vitals</h4>
+            <div class="vitals-grid">
+              <div class="vital-item">
+                <span class="icon">🌡️</span>
+                <span class="label">Temperature</span>
+                <span class="value">{{ extractionResult.vitals.temperature ? extractionResult.vitals.temperature + ' °C' : '—' }}</span>
+              </div>
+              <div class="vital-item">
+                <span class="icon">🩺</span>
+                <span class="label">Blood Pressure</span>
+                <span class="value">{{ extractionResult.vitals.blood_pressure || '—' }}</span>
+              </div>
+              <div class="vital-item">
+                <span class="icon">❤️</span>
+                <span class="label">Heart Rate</span>
+                <span class="value">{{ extractionResult.vitals.heart_rate ? extractionResult.vitals.heart_rate + ' bpm' : '—' }}</span>
+              </div>
+              <div class="vital-item">
+                <span class="icon">🫁</span>
+                <span class="label">Respiratory</span>
+                <span class="value">{{ extractionResult.vitals.respiratory_rate ? extractionResult.vitals.respiratory_rate + ' /min' : '—' }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clarification Dialog Box -->
+        <div class="report-card clarification-box" *ngIf="extractionResult.clarification_questions && extractionResult.clarification_questions.length > 0">
+          <div class="card-body">
+            <h4 class="warning-title">⚠️ Clarification Pending</h4>
+            <p class="clarification-hint">Gemini requested follow-up details to refine the clinical analysis:</p>
+            <ul class="clarification-questions">
+              <li *ngFor="let question of extractionResult.clarification_questions">
+                {{ question }}
+              </li>
+            </ul>
+            <div class="clarification-form">
+              <input
+                type="text"
+                [(ngModel)]="clarificationText"
+                placeholder="Type response to clinical questions..."
+                (keyup.enter)="submitClarification()"
+                [disabled]="isProcessing"
+                class="clarification-input"
+              />
+              <button
+                [disabled]="isProcessing || !clarificationText.trim()"
+                (click)="submitClarification()"
+                class="btn btn-clarify"
+              >
+                {{ isProcessing ? 'Updating...' : 'Submit Answers' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions Footer -->
+    <div class="report-footer">
+      <button (click)="resetExtraction()" class="btn btn-secondary">
+        🔄 Record New Encounter Case
+      </button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,9 @@
+# Normalise line endings to LF in the repo for all text files
+* text=auto eol=lf
+
+# Force binary — never touch these
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.db  binary

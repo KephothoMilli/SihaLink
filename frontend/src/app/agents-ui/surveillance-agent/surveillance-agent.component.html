@@ -1,0 +1,191 @@
+<!-- Surveillance Agent UI Template -->
+
+<div class="surveillance-agent-container">
+  <div class="agent-title-section">
+    <span class="agent-badge">Surveillance Agent</span>
+    <h2>Epidemiological Surveillance Dashboard</h2>
+    <p class="description">
+      Monitor public health indicators, analyze disease syndrome baselines, and check clusters for early outbreak detection across regions.
+    </p>
+  </div>
+
+  <div class="error-message animate-fade-in" *ngIf="error">
+    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
+  </div>
+
+  <!-- Search & Query Panel -->
+  <div class="surveillance-controls-card">
+    <h3>Query Parameters</h3>
+    <div class="controls-grid">
+      <div class="input-group">
+        <label>Focus Region / County</label>
+        <input type="text" [(ngModel)]="selectedRegion" placeholder="e.g., Kisumu County" />
+      </div>
+
+      <div class="date-range">
+        <div class="input-group">
+          <label>Start Date</label>
+          <input type="datetime-local" [(ngModel)]="startDate" />
+        </div>
+        <div class="input-group">
+          <label>End Date</label>
+          <input type="datetime-local" [(ngModel)]="endDate" />
+        </div>
+      </div>
+    </div>
+
+    <div class="action-buttons">
+      <button (click)="getRegionAlerts()" [disabled]="isLoading" class="btn btn-primary">
+        {{ isLoading ? '⏳ Loading...' : '🚨 Get Outbreak Signals' }}
+      </button>
+      <button (click)="loadDashboard()" [disabled]="isLoading" class="btn btn-secondary-gps">
+        {{ isLoading ? '⏳ Loading...' : '📊 Load Main Dashboard' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Navigation Tab Pills Container -->
+  <div class="tabs-container">
+    <button [class.active]="activeTab === 'dashboard'" (click)="activeTab = 'dashboard'" class="tab-pill">
+      📈 Status Summary
+    </button>
+    <button [class.active]="activeTab === 'alerts'" (click)="activeTab = 'alerts'" class="tab-pill">
+      🚨 Outbreak Alerts
+    </button>
+    <button [class.active]="activeTab === 'trends'" (click)="activeTab = 'trends'" class="tab-pill">
+      📈 Syndrome Trends
+    </button>
+    <button [class.active]="activeTab === 'clusters'" (click)="activeTab = 'clusters'" class="tab-pill">
+      🗺️ Geospatial Clusters
+    </button>
+  </div>
+
+  <!-- Dashboard Tab -->
+  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'dashboard' && dashboardData">
+    <h3>National Syndromic Indicators</h3>
+    <p class="section-hint">Overview of the monitored syndrome thresholds and active alerts:</p>
+    
+    <div class="dashboard-grid">
+      <div class="dashboard-card" *ngFor="let metric of dashboardData.metrics">
+        <h4>{{ metric.name }}</h4>
+        <div class="metric-value">{{ metric.value }}</div>
+        
+        <div class="metric-footer" *ngIf="metric.trend !== undefined">
+          <span class="trend-indicator" [style.color]="metric.trend > 0 ? 'var(--color-red)' : 'var(--color-green)'" [style.background-color]="metric.trend > 0 ? 'var(--color-red-light)' : 'var(--color-green-light)'">
+            {{ metric.trend > 0 ? '▲' : '▼' }} {{ Math.abs(metric.trend) }}%
+          </span>
+          <span class="trend-lbl">vs last baseline period</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alerts Tab -->
+  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'alerts'">
+    <h3>Active Region Alerts</h3>
+    <p class="section-hint">Signals triggered by syndrome cases exceeding rolling statistical baselines:</p>
+    
+    <div class="alerts-list" *ngIf="regionAlerts.length > 0">
+      <div
+        class="surveillance-alert-card animate-fade-in"
+        *ngFor="let alert of regionAlerts"
+        [style.border-left]="'6px solid ' + getAlertColor(alert.severity)"
+      >
+        <div class="alert-header">
+          <h4>{{ alert.title }}</h4>
+          <span class="severity-badge" [style.background-color]="getAlertColor(alert.severity) + '15'" [style.color]="getAlertColor(alert.severity)">
+            {{ alert.severity }} priority
+          </span>
+        </div>
+        
+        <p class="alert-type">{{ alert.alert_type }}</p>
+        <p class="description">{{ alert.description }}</p>
+        
+        <div class="alert-details-grid">
+          <div class="detail-item" *ngIf="alert.case_count">
+            <span class="lbl">Reported Cases</span>
+            <span class="val">{{ alert.case_count }}</span>
+          </div>
+          <div class="detail-item" *ngIf="alert.threshold">
+            <span class="lbl">Baseline Limit</span>
+            <span class="val">{{ alert.threshold }}</span>
+          </div>
+        </div>
+
+        <div class="recommendations-box" *ngIf="alert.recommendations && alert.recommendations.length > 0">
+          <h5>⚕️ MoH Recommended Response Protocol</h5>
+          <ul class="rec-list">
+            <li *ngFor="let rec of alert.recommendations">
+              <span class="checkbox">✓</span>
+              <span class="text">{{ rec }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="empty-tab-card" *ngIf="regionAlerts.length === 0">
+      <p>No active outbreak alerts found for the selected parameters.</p>
+    </div>
+  </div>
+
+  <!-- Trends Tab -->
+  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'trends'">
+    <h3>Symptom Trend Analysis</h3>
+    <p class="section-hint">Graph historical syndrome patterns against threshold parameters:</p>
+    
+    <div class="symptom-search-card">
+      <input type="text" [(ngModel)]="selectedSymptom" placeholder="e.g., watery_diarrhea, fever..." />
+      <button (click)="analyzeSymptomTrends()" [disabled]="isLoading" class="btn btn-primary">
+        {{ isLoading ? 'Analyzing...' : '📈 Plot Trends' }}
+      </button>
+    </div>
+
+    <div class="trend-results animate-fade-in" *ngIf="trendAnalysis">
+      <h4>{{ selectedSymptom }} Historical Trend Analysis</h4>
+      
+      <div class="trend-data-preview">
+        <label>Rolling Weekly Case Summary</label>
+        <pre><code>{{ trendAnalysis | json }}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clusters Tab -->
+  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'clusters'">
+    <h3>Geospatial Clusters</h3>
+    <p class="section-hint">Calculates spatial case density to identify clusters of localized disease spread:</p>
+    
+    <button (click)="checkDiseaseClusters()" [disabled]="isLoading" class="btn btn-primary margin-bottom-md">
+      {{ isLoading ? '⏳ Calculating density...' : '🔍 Compute Clusters' }}
+    </button>
+
+    <div class="clusters-grid" *ngIf="clusterData && clusterData.clusters && clusterData.clusters.length > 0">
+      <div class="cluster-card animate-fade-in" *ngFor="let cluster of clusterData.clusters">
+        <div class="cluster-header">
+          <h4>{{ cluster.disease }}</h4>
+          <span class="confidence-chip">{{ (cluster.confidence * 100).toFixed(0) }}% confidence</span>
+        </div>
+        
+        <div class="cluster-body">
+          <div class="meta-row">
+            <span class="lbl">Location Center:</span>
+            <span class="val">📍 {{ cluster.location }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="lbl">Case Counts:</span>
+            <span class="val">{{ cluster.case_count }} incidents</span>
+          </div>
+          <div class="meta-row">
+            <span class="lbl">Incidence Radius:</span>
+            <span class="val">{{ cluster.radius_km }} km</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="empty-tab-card" *ngIf="!clusterData || !clusterData.clusters || clusterData.clusters.length === 0">
+      <p>No localized outbreak clusters detected on the grid.</p>
+    </div>
+  </div>
+</div>

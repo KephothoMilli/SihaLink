@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "projectId": {
+      "value": "PROJECT_ID"
+    },
+    "environment": {
+      "value": "prod"
+    },
+    "region": {
+      "value": "us-central1"
+    },
+    "mongodbAtlasUri": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/{subscriptionId}/resourceGroups/afya-voice/providers/Microsoft.KeyVault/vaults/kv-prod-xxx"
+        },
+        "secretName": "mongodb-atlas-uri"
+      }
+    },
+    "geminApiKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/{subscriptionId}/resourceGroups/afya-voice/providers/Microsoft.KeyVault/vaults/kv-prod-xxx"
+        },
+        "secretName": "gemini-api-key"
+      }
+    },
+    "googleMapsApiKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/{subscriptionId}/resourceGroups/afya-voice/providers/Microsoft.KeyVault/vaults/kv-prod-xxx"
+        },
+        "secretName": "google-maps-api-key"
+      }
+    }
+  }
+}

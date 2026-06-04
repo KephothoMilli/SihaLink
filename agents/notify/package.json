@@ -1,0 +1,21 @@
+{
+  "name": "sihalink-notify-agent",
+  "version": "1.0.0",
+  "description": "SihaLink Telegram notification agent using grammY",
+  "main": "dist/bot.js",
+  "scripts": {
+    "dev": "ts-node --esm bot.ts",
+    "build": "tsc",
+    "start": "node dist/bot.js"
+  },
+  "dependencies": {
+    "@grammyjs/conversations": "^1.2.0",
+    "fastify": "^4.28.1",
+    "grammy": "^1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}

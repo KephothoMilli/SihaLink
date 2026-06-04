@@ -1,0 +1,75 @@
+{
+  "name": "afya_voice_data_agent",
+  "description": "MongoDB MCP superpower layer. Handles encounter insertion, vector embedding storage, autonomous index management, alert CRUD, and offline queue sync.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "insert_encounter",
+      "description": "Insert a geo-enriched encounter into MongoDB with vector embedding. Demonstrates autonomous MongoDB document insertion.",
+      "parameters": {
+        "enriched_encounter": "object (required) — geo-enriched encounter document"
+      },
+      "endpoint": "/tool/insert_encounter",
+      "method": "POST",
+      "returns": {"inserted_id": "string (MongoDB ObjectId)"}
+    },
+    {
+      "name": "batch_insert_encounters",
+      "description": "Batch insert up to 50 encounters (offline sync). Generates embeddings for each.",
+      "parameters": {
+        "encounters": "array[object] (required) — list of encounter documents"
+      },
+      "endpoint": "/tool/batch_insert_encounters",
+      "method": "POST",
+      "returns": {"inserted_count": "integer", "inserted_ids": "array[string]"}
+    },
+    {
+      "name": "query_active_alerts",
+      "description": "Query active alerts from MongoDB, optionally filtered by county.",
+      "parameters": {
+        "county": "string (optional)"
+      },
+      "endpoint": "/tool/query_active_alerts",
+      "method": "POST",
+      "returns": {"alerts": "array[object]", "count": "integer"}
+    },
+    {
+      "name": "update_alert_status",
+      "description": "Acknowledge an alert (sets status and records who acknowledged).",
+      "parameters": {
+        "alert_id": "string (required)",
+        "status": "string (required) — acknowledged|resolved",
+        "user_id": "string (optional)"
+      },
+      "endpoint": "/tool/update_alert_status",
+      "method": "POST"
+    },
+    {
+      "name": "resolve_alert",
+      "description": "Resolve an alert with resolution notes.",
+      "parameters": {
+        "alert_id": "string (required)",
+        "notes": "string (optional)",
+        "user_id": "string (optional)"
+      },
+      "endpoint": "/tool/resolve_alert",
+      "method": "POST"
+    },
+    {
+      "name": "create_vector_index",
+      "description": "Idempotent: creates the Atlas Vector Search index on encounters.embedding (768-dim cosine). Demonstrates autonomous vector index creation.",
+      "parameters": {},
+      "endpoint": "/tool/create_vector_index",
+      "method": "POST"
+    },
+    {
+      "name": "sync_offline_encounters",
+      "description": "Process encounters queued while offline. Inserts in batches of 50.",
+      "parameters": {
+        "encounters": "array[object] (required)"
+      },
+      "endpoint": "/tool/sync_offline_encounters",
+      "method": "POST"
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+<!-- Data Agent UI Template -->
+
+<div class="data-agent-container">
+  <div class="agent-title-section">
+    <span class="agent-badge">Data Agent</span>
+    <h2>MongoDB Data Management Portal</h2>
+    <p class="description">
+      Query the MongoDB Atlas database for clinical encounters using hybrid vector search, and run syndromic trend analyses.
+    </p>
+  </div>
+
+  <div class="error-message animate-fade-in" *ngIf="error">
+    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
+  </div>
+
+  <div class="data-split-layout">
+    <!-- Left Column: Search & Trends Forms -->
+    <div class="forms-column">
+      <!-- Search Card -->
+      <div class="action-card search-card">
+        <h3>Search Case Encounters</h3>
+        <p class="section-hint">Executes vector-based embedding search on clinical reports:</p>
+        <div class="search-box">
+          <input
+            type="text"
+            [(ngModel)]="searchQuery"
+            placeholder="Search symptoms, e.g., 'severe fever with chills'..."
+            (keyup.enter)="searchEncounters()"
+          />
+          <button (click)="searchEncounters()" [disabled]="isLoading" class="btn btn-search">
+            {{ isLoading ? 'Searching...' : '🔍 Search' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Trend Analysis Card -->
+      <div class="action-card trend-card">
+        <h3>Syndromic Trend Analysis</h3>
+        <p class="section-hint">Compute syndromic aggregates over a geographical boundary:</p>
+        <div class="trend-form">
+          <div class="input-group">
+            <label>County / Region</label>
+            <input type="text" [(ngModel)]="trendRegion" placeholder="e.g., Nairobi County" />
+          </div>
+          <div class="input-group">
+            <label>Time Range (Days)</label>
+            <input type="number" [(ngModel)]="trendDays" min="1" max="365" />
+          </div>
+          <button (click)="getTrendAnalysis()" [disabled]="isLoading" class="btn btn-trend">
+            {{ isLoading ? 'Analyzing...' : '📊 Run Trend Query' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Results Output -->
+    <div class="results-column">
+      <!-- Search Results -->
+      <div class="results-section animate-fade-in" *ngIf="searchResults">
+        <div class="results-header">
+          <h3>Query Results ({{ searchResults.total_count }} found)</h3>
+        </div>
+
+        <div class="encounters-deck">
+          <div class="encounter-card animate-fade-in" *ngFor="let encounter of searchResults.encounters; let i = index">
+            <div class="encounter-header">
+              <span class="encounter-id-label">ID: <code>{{ encounter.id }}</code></span>
+              <span
+                class="relevance-badge"
+                *ngIf="searchResults.relevance_scores[i]"
+                [style.background-color]="searchResults.relevance_scores[i] > 0.8 ? 'var(--color-primary-light)' : 'var(--color-secondary-light)'"
+                [style.color]="searchResults.relevance_scores[i] > 0.8 ? 'var(--color-primary)' : 'var(--color-secondary)'"
+              >
+                {{ (searchResults.relevance_scores[i] * 100).toFixed(0) }}% match
+              </span>
+            </div>
+            
+            <div class="encounter-body">
+              <p><strong>Captured:</strong> {{ encounter.timestamp | date: 'medium' }}</p>
+              <p *ngIf="encounter.chw_id"><strong>Worker ID:</strong> <code>{{ encounter.chw_id }}</code></p>
+              <p class="symptoms-preview">
+                <strong>Symptoms:</strong>
+                {{ encounter.encounter_json.symptoms?.join(', ') || 'No symptoms extracted' }}
+              </p>
+            </div>
+
+            <div class="encounter-actions">
+              <button (click)="selectEncounter(encounter)" class="btn btn-info-sm">
+                View Full Details
+              </button>
+            </div>
+          </div>
+
+          <div class="no-results-card" *ngIf="searchResults.encounters.length === 0">
+            <p>No encounters matched the query description.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Trend Results -->
+      <div class="results-section animate-fade-in" *ngIf="showTrends && trendData">
+        <div class="results-header">
+          <h3>Syndrome Trends for {{ trendRegion || 'All Counties' }}</h3>
+          <button (click)="clearTrends()" class="btn-clear">✕ Clear</button>
+        </div>
+
+        <div class="trend-metrics-grid">
+          <div class="trend-metric-card" *ngFor="let item of trendData">
+            <span class="label">{{ item.name || 'Syndrome' }}</span>
+            <span class="value">{{ item.value || 0 }} cases</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected Encounter Details (Nested card) -->
+      <div class="results-section selected-encounter-section animate-fade-in" *ngIf="selectedEncounter">
+        <div class="results-header">
+          <h3>Case Document Details</h3>
+          <button (click)="clearSelection()" class="btn-clear">✕ Close</button>
+        </div>
+
+        <div class="selected-details-card">
+          <div class="details-meta">
+            <p><strong>Document ID:</strong> <code>{{ selectedEncounter.id }}</code></p>
+            <p><strong>Timestamp:</strong> {{ selectedEncounter.timestamp | date: 'medium' }}</p>
+            <p *ngIf="selectedEncounter.chw_id"><strong>CHW Operator:</strong> <code>{{ selectedEncounter.chw_id }}</code></p>
+          </div>
+          
+          <div class="json-viewer">
+            <label>Raw JSON Metadata Document</label>
+            <pre><code>{{ selectedEncounter.encounter_json | json }}</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,42 @@
+{
+  "name": "afya_voice_intake_agent",
+  "description": "Multilingual clinical extraction from CHV voice recordings. Supports Dholuo, Swahili, Kikuyu, Somali, English.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "extract_clinical_data",
+      "description": "Extract structured clinical data (syndrome, triage, symptoms) from base64-encoded audio. Supports multi-turn clarification.",
+      "parameters": {
+        "audio_base64": "string (required) — base64-encoded WAV or WebM audio",
+        "clarification_answers": "array[string] (optional) — CHV answers to clarification questions"
+      },
+      "endpoint": "/tool/extract_clinical_data",
+      "method": "POST",
+      "returns": {
+        "extracted": {
+          "language": "string",
+          "syndrome": "string (IDSR category)",
+          "primary_symptoms": "array[string]",
+          "severity": "mild|moderate|severe",
+          "triage_color": "GREEN|YELLOW|RED",
+          "chief_complaint": "string",
+          "age": {"value": "number", "unit": "days|months|years"},
+          "sex": "male|female|unknown",
+          "confidence": "float 0-1",
+          "clarification_needed": "boolean",
+          "clarification_question": "string|null"
+        }
+      }
+    },
+    {
+      "name": "clarify_extraction",
+      "description": "Refine a previous extraction with a CHV clarification answer (second-pass NLP).",
+      "parameters": {
+        "original_extraction": "object (required) — previous extraction result",
+        "clarification_answer": "string (required) — CHV's answer to the clarification question"
+      },
+      "endpoint": "/tool/clarify_extraction",
+      "method": "POST"
+    }
+  ]
+}

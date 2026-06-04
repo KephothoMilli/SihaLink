@@ -1,0 +1,203 @@
+openapi: 3.0.3
+info:
+  title: SihaLink ADK REST API
+  description: OpenAPI spec for ADK-compatible `/tool/...` endpoints (Intake, Geo, Data, Orchestrator)
+  version: 0.1.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /tool/extract_clinical_data:
+    post:
+      summary: Extract clinical data from base64 audio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractClinicalDataRequest"
+      responses:
+        "200":
+          description: Extraction result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  extracted:
+                    type: object
+  /tool/enrich_encounter:
+    post:
+      summary: Enrich encounter with geo metadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrichEncounterRequest"
+      responses:
+        "200":
+          description: Enriched encounter
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enriched_encounter:
+                    type: object
+  /tool/insert_encounter:
+    post:
+      summary: Insert an encounter into persistence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsertEncounterRequest"
+      responses:
+        "200":
+          description: Insert result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inserted_id:
+                    type: string
+  /tool/query_active_alerts:
+    post:
+      summary: Query active alerts by region
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryActiveAlertsRequest"
+      responses:
+        "200":
+          description: Array of alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /tool/update_alert_status:
+    post:
+      summary: Update an alert status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAlertStatusRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matched_count:
+                    type: integer
+                  modified_count:
+                    type: integer
+  /tool/start_encounter:
+    post:
+      summary: Start an encounter (orchestrator)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartEncounterRequest"
+      responses:
+        "200":
+          description: Started
+          content:
+            application/json:
+              schema:
+                type: object
+  /tool/route_to_intake:
+    post:
+      summary: Route raw audio to intake
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Routed
+          content:
+            application/json:
+              schema:
+                type: object
+  /tool/route_to_geo:
+    post:
+      summary: Route encounter to geo enrichment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Routed
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  schemas:
+    ExtractClinicalDataRequest:
+      type: object
+      properties:
+        audio_base64:
+          type: string
+          description: Base64-encoded audio data
+      required:
+        - audio_base64
+    EnrichEncounterRequest:
+      type: object
+      properties:
+        encounter_json:
+          type: object
+        latitude:
+          type: number
+          format: float
+        longitude:
+          type: number
+          format: float
+      required: [encounter_json]
+    InsertEncounterRequest:
+      type: object
+      properties:
+        enriched_encounter:
+          type: object
+      required: [enriched_encounter]
+    QueryActiveAlertsRequest:
+      type: object
+      properties:
+        county:
+          type: string
+    UpdateAlertStatusRequest:
+      type: object
+      properties:
+        alert_id:
+          type: string
+        status:
+          type: string
+        user_id:
+          type: string
+      required: [alert_id, status]
+    StartEncounterRequest:
+      type: object
+      properties:
+        audio_base64:
+          type: string
+        metadata:
+          type: object
+      required: [audio_base64]
