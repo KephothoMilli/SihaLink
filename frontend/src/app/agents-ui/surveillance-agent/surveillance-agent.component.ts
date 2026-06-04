@@ -1,7 +1,8 @@
 /**
  * Surveillance Agent UI Component
  *
- * Interface for epidemiological surveillance and public health monitoring
+ * Interface for epidemiological surveillance and public health monitoring.
+ * All method calls aligned to the refactored SurveillanceAgentService signatures.
  */
 
 import { Component, OnInit } from '@angular/core';
@@ -20,11 +21,10 @@ import {
   imports: [CommonModule, FormsModule],
 })
 export class SurveillanceAgentComponent implements OnInit {
-  // Expose Math to the template
   readonly Math = Math;
 
-  selectedRegion: string = '';
-  selectedSymptom: string = '';
+  selectedRegion = '';
+  selectedSymptom = '';
   regionAlerts: SurveillanceAlert[] = [];
   dashboardData: any = null;
   trendAnalysis: any = null;
@@ -34,11 +34,8 @@ export class SurveillanceAgentComponent implements OnInit {
   error: string | null = null;
   activeTab: 'alerts' | 'trends' | 'clusters' | 'dashboard' = 'dashboard';
 
-  // datetime-local inputs need ISO string format
-  startDate: string = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 16);
-  endDate: string = new Date().toISOString().slice(0, 16);
+  // Days range for trend / alert queries
+  trendDays = 30;
 
   constructor(private surveillanceAgent: SurveillanceAgentService) {}
 
@@ -49,7 +46,6 @@ export class SurveillanceAgentComponent implements OnInit {
   async loadDashboard() {
     this.isLoading = true;
     this.error = null;
-
     try {
       this.dashboardData = await this.surveillanceAgent.getDashboardData();
     } catch (err) {
@@ -60,20 +56,18 @@ export class SurveillanceAgentComponent implements OnInit {
     }
   }
 
+  /** Get active alerts for the selected region (county). */
   async getRegionAlerts() {
     if (!this.selectedRegion.trim()) {
       this.error = 'Please select a region';
       return;
     }
-
     this.isLoading = true;
     this.error = null;
-
     try {
+      // getRegionAlerts expects { region: string }
       this.regionAlerts = await this.surveillanceAgent.getRegionAlerts({
         region: this.selectedRegion,
-        start_date: new Date(this.startDate).getTime(),
-        end_date: new Date(this.endDate).getTime(),
       });
       this.activeTab = 'alerts';
     } catch (err) {
@@ -83,41 +77,37 @@ export class SurveillanceAgentComponent implements OnInit {
     }
   }
 
+  /** Analyse CHW outreach gaps for the selected county (replaces broken analyzeSymptomTrends). */
   async analyzeSymptomTrends() {
-    if (!this.selectedSymptom.trim()) {
-      this.error = 'Please enter a symptom';
+    if (!this.selectedRegion.trim()) {
+      this.error = 'Please select a county';
       return;
     }
-
     this.isLoading = true;
     this.error = null;
-
     try {
+      // analyzeSymptomTrends expects { county: string; days?: number }
       this.trendAnalysis = await this.surveillanceAgent.analyzeSymptomTrends({
-        symptom: this.selectedSymptom,
-        region: this.selectedRegion,
-        days: Math.floor(
-          (new Date(this.endDate).getTime() -
-            new Date(this.startDate).getTime()) /
-            (24 * 60 * 60 * 1000),
-        ),
+        county: this.selectedRegion,
+        days: this.trendDays,
       });
       this.activeTab = 'trends';
     } catch (err) {
       this.error =
-        err instanceof Error ? err.message : 'Failed to analyze trends';
+        err instanceof Error ? err.message : 'Failed to analyse trends';
     } finally {
       this.isLoading = false;
     }
   }
 
+  /** Detect cross-county spread clusters for the selected symptom. */
   async checkDiseaseClusters() {
     this.isLoading = true;
     this.error = null;
-
     try {
+      // checkDiseaseClusters expects { disease?: string; hours?: number }
       this.clusterData = await this.surveillanceAgent.checkDiseaseClusters({
-        region: this.selectedRegion,
+        disease: this.selectedSymptom || undefined,
       });
       this.activeTab = 'clusters';
     } catch (err) {

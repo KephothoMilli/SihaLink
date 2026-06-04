@@ -1,193 +1,550 @@
-<!-- Intake Agent UI Template -->
+<!-- ════════════════════════════════════════════════════════════════════
+     SihaLink — Intake Agent  (Angular Material 3)
+     ════════════════════════════════════════════════════════════════════ -->
 
-<div class="intake-agent-container">
-  <div class="agent-title-section">
-    <span class="agent-badge">Intake Agent</span>
-    <h2>Clinical Data Intake Portal</h2>
-    <p class="description">
-      Record patient symptoms in Dholuo, Swahili, Kikuyu, Somali, or English. Gemini AI will analyze the speech to extract clinical assessments, vitals, and recommended triage.
-    </p>
+<div class="intake-container">
+
+  <!-- Page header ─────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <span class="material-symbols-outlined header-icon">vaccines</span>
+    <div>
+      <h1 class="mat-headline-medium">Clinical Intake Portal</h1>
+      <p class="mat-body-medium subtitle">
+        Submit patient encounters via voice, form, or Telegram relay &mdash;
+        in any Kenyan language.
+      </p>
+    </div>
   </div>
 
-  <div class="error-message animate-fade-in" *ngIf="error">
-    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
-  </div>
+  <!-- Progress bar while processing ──────────────────────────────────── -->
+  @if (isProcessing) {
+  <mat-progress-bar mode="indeterminate" color="primary" class="global-progress" />
+  }
 
-  <!-- Recording Interface -->
-  <div class="recording-section animate-fade-in" *ngIf="!extractionResult">
-    <div class="recorder-card">
-      <div class="pulse-wrapper" *ngIf="isRecording">
-        <div class="voice-wave">
-          <span class="stroke"></span>
-          <span class="stroke"></span>
-          <span class="stroke"></span>
-          <span class="stroke"></span>
-          <span class="stroke"></span>
-          <span class="stroke"></span>
-          <span class="stroke"></span>
+  <!-- ── RESULTS PANEL ─────────────────────────────────────────────── -->
+  @if (extractionResult) {
+  <div class="results-section">
+
+    <!-- Triage header card -->
+    <mat-card appearance="outlined" class="triage-card"
+      [style.border-color]="triageColor(extractionResult['triage_color'])">
+      <mat-card-content>
+        <div class="triage-row">
+          <span class="material-symbols-outlined triage-icon"
+            [style.color]="triageColor(extractionResult['triage_color'])">
+            {{ triageIcon(extractionResult['triage_color']) }}
+          </span>
+          <div>
+            <p class="mat-label-small muted">Triage Priority</p>
+            <p class="mat-title-large triage-label" [style.color]="triageColor(extractionResult['triage_color'])">
+              {{ extractionResult['triage_color'] || 'UNKNOWN' }}
+            </p>
+          </div>
+          <div class="triage-syndrome">
+            <p class="mat-label-small muted">Syndrome</p>
+            <p class="mat-title-medium">{{ formatSyndrome(extractionResult['syndrome']) }}</p>
+          </div>
+          <div class="triage-confidence">
+            <p class="mat-label-small muted">AI Confidence</p>
+            <p class="mat-title-medium">
+              {{ (extractionResult.confidence_score * 100).toFixed(0) }}%
+            </p>
+          </div>
+          @if (extractionResult['detected_language']) {
+          <div>
+            <p class="mat-label-small muted">Language Detected</p>
+            <p class="mat-body-large">{{ extractionResult['detected_language'] }}</p>
+          </div>
+          }
+          <span class="spacer"></span>
+          <button mat-icon-button matTooltip="Start new encounter" (click)="reset()">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
         </div>
-        <p class="timer">{{ getRecordingTimeDisplay() }}</p>
-      </div>
+      </mat-card-content>
+    </mat-card>
 
-      <div class="recorder-icon-static" *ngIf="!isRecording && !audioBlob">
-        🎤
-      </div>
-
-      <div class="recorded-success-icon" *ngIf="audioBlob && !isRecording">
-        ✓ Audio Captured
-      </div>
-
-      <div class="recorder-controls">
-        <button
-          *ngIf="!isRecording"
-          [disabled]="isProcessing"
-          (click)="startRecording()"
-          class="btn btn-record"
-        >
-          Start Recording
-        </button>
-        <button
-          *ngIf="isRecording"
-          (click)="stopRecording()"
-          class="btn btn-stop animate-pulse"
-        >
-          ⏹ Stop Recording
-        </button>
-      </div>
-
-      <div class="submit-action" *ngIf="audioBlob && !isRecording">
-        <button
-          [disabled]="isProcessing"
-          (click)="processAudio()"
-          class="btn btn-process-trigger"
-        >
-          {{ isProcessing ? '⏳ Analyzing Speech...' : '⚡ Process Audio' }}
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Results Interface -->
-  <div class="extraction-result animate-fade-in" *ngIf="extractionResult">
-    <div class="result-header">
-      <h3>Clinical Report</h3>
-      <div class="confidence-pill">
-        <span class="label">AI Confidence:</span>
-        <span class="val">{{ (extractionResult.confidence_score * 100).toFixed(0) }}%</span>
-      </div>
-    </div>
-
-    <!-- Layout Grid -->
+    <!-- Results grid -->
     <div class="results-grid">
-      <!-- Left Column -->
+
+      <!-- Left column -->
       <div class="results-main">
-        <!-- Symptoms -->
-        <div class="report-card">
-          <div class="card-icon">🩺</div>
-          <div class="card-body">
-            <h4>Primary Symptoms</h4>
-            <div class="symptoms-list">
-              <span class="symptom-tag" *ngFor="let symptom of extractionResult.symptoms">
-                {{ symptom }}
-              </span>
-              <span class="symptom-empty" *ngIf="!extractionResult.symptoms || extractionResult.symptoms.length === 0">
-                No acute symptoms explicitly recorded
-              </span>
-            </div>
-          </div>
-        </div>
 
-        <!-- Assessment -->
-        <div class="report-card">
-          <div class="card-icon">📋</div>
-          <div class="card-body">
-            <h4>Clinical Assessment Summary</h4>
-            <p class="assessment-text">{{ extractionResult.clinical_assessment }}</p>
-          </div>
-        </div>
+        <!-- Symptoms chip list -->
+        <mat-card appearance="outlined">
+          <mat-card-header>
+            <span class="material-symbols-outlined card-icon" mat-card-avatar>
+              stethoscope
+            </span>
+            <mat-card-title>Primary Symptoms</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            @if (extractionResult.symptoms.length) {
+            <mat-chip-set>
+              @for (s of extractionResult.symptoms; track s) {
+              <mat-chip>{{ s }}</mat-chip>
+              }
+            </mat-chip-set>
+            } @else {
+            <p class="mat-body-medium muted">No acute symptoms explicitly recorded.</p>
+            }
+          </mat-card-content>
+        </mat-card>
 
-        <!-- Recommended Actions -->
-        <div class="report-card">
-          <div class="card-icon">⚡</div>
-          <div class="card-body">
-            <h4>Recommended Protocols</h4>
-            <ul class="protocols-list">
-              <li *ngFor="let action of extractionResult.recommended_actions">
-                {{ action }}
+        <!-- Clinical assessment -->
+        @if (extractionResult.clinical_assessment) {
+        <mat-card appearance="outlined">
+          <mat-card-header>
+            <span class="material-symbols-outlined card-icon" mat-card-avatar>
+              description
+            </span>
+            <mat-card-title>Clinical Assessment</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <p class="mat-body-large">{{ extractionResult.clinical_assessment }}</p>
+          </mat-card-content>
+        </mat-card>
+        }
+
+        <!-- Recommended actions -->
+        @if (extractionResult.recommended_actions.length) {
+        <mat-card appearance="outlined">
+          <mat-card-header>
+            <span class="material-symbols-outlined card-icon" mat-card-avatar>
+              bolt
+            </span>
+            <mat-card-title>Recommended Protocols</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <ul class="protocol-list">
+              @for (a of extractionResult.recommended_actions; track a) {
+              <li>
+                <span class="material-symbols-outlined list-bullet">chevron_right</span>
+                {{ a }}
               </li>
+              }
             </ul>
-          </div>
-        </div>
+          </mat-card-content>
+        </mat-card>
+        }
       </div>
 
-      <!-- Right Column -->
+      <!-- Right column -->
       <div class="results-side">
-        <!-- Vitals Grid -->
-        <div class="report-card vitals-container">
-          <div class="card-body">
-            <h4>Patient Vitals</h4>
+
+        <!-- Vitals card -->
+        <mat-card appearance="outlined">
+          <mat-card-header>
+            <span class="material-symbols-outlined card-icon" mat-card-avatar>
+              monitor_heart
+            </span>
+            <mat-card-title>Patient Vitals</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
             <div class="vitals-grid">
               <div class="vital-item">
-                <span class="icon">🌡️</span>
-                <span class="label">Temperature</span>
-                <span class="value">{{ extractionResult.vitals.temperature ? extractionResult.vitals.temperature + ' °C' : '—' }}</span>
+                <span class="material-symbols-outlined vital-icon">person</span>
+                <span class="mat-label-small">Age</span>
+                <span class="mat-body-large">
+                  {{ extractionResult['age']?.value ?? '—' }}
+                  {{ extractionResult['age']?.unit ?? '' }}
+                </span>
               </div>
               <div class="vital-item">
-                <span class="icon">🩺</span>
-                <span class="label">Blood Pressure</span>
-                <span class="value">{{ extractionResult.vitals.blood_pressure || '—' }}</span>
+                <span class="material-symbols-outlined vital-icon">wc</span>
+                <span class="mat-label-small">Sex</span>
+                <span class="mat-body-large">{{ extractionResult['sex'] || '—' }}</span>
               </div>
               <div class="vital-item">
-                <span class="icon">❤️</span>
-                <span class="label">Heart Rate</span>
-                <span class="value">{{ extractionResult.vitals.heart_rate ? extractionResult.vitals.heart_rate + ' bpm' : '—' }}</span>
+                <span class="material-symbols-outlined vital-icon">thermometer</span>
+                <span class="mat-label-small">Temperature</span>
+                <span class="mat-body-large">
+                  {{ extractionResult.vitals.temperature
+                  ? extractionResult.vitals.temperature + ' °C' : '—' }}
+                </span>
               </div>
               <div class="vital-item">
-                <span class="icon">🫁</span>
-                <span class="label">Respiratory</span>
-                <span class="value">{{ extractionResult.vitals.respiratory_rate ? extractionResult.vitals.respiratory_rate + ' /min' : '—' }}</span>
+                <span class="material-symbols-outlined vital-icon">pulmonology</span>
+                <span class="mat-label-small">Respiratory</span>
+                <span class="mat-body-large">
+                  {{ extractionResult.vitals.respiratory_rate
+                  ? extractionResult.vitals.respiratory_rate + ' /min' : '—' }}
+                </span>
               </div>
+              <div class="vital-item">
+                <span class="material-symbols-outlined vital-icon">cardiology</span>
+                <span class="mat-label-small">Heart Rate</span>
+                <span class="mat-body-large">
+                  {{ extractionResult.vitals.heart_rate
+                  ? extractionResult.vitals.heart_rate + ' bpm' : '—' }}
+                </span>
+              </div>
+              <div class="vital-item">
+                <span class="material-symbols-outlined vital-icon">bloodtype</span>
+                <span class="mat-label-small">Blood Pressure</span>
+                <span class="mat-body-large">
+                  {{ extractionResult.vitals.blood_pressure || '—' }} </span>
+              </div>
+            </div>
+          </mat-card-content>
+        </mat-card>
+
+        <!-- Clarification card -->
+        @if (extractionResult.clarification_questions.length) {
+        <mat-card appearance="outlined" class="clarification-card">
+          <mat-card-header>
+            <span class="material-symbols-outlined card-icon warning-icon" mat-card-avatar>
+              help
+            </span>
+            <mat-card-title>Clarification Needed</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <ul class="clarification-list">
+              @for (q of extractionResult.clarification_questions; track q) {
+              <li>{{ q }}</li>
+              }
+            </ul>
+            <mat-form-field appearance="outline" class="full-width mt-2">
+              <mat-label>Your response</mat-label>
+              <input matInput [(ngModel)]="clarificationText" (keyup.enter)="submitClarification()"
+                [disabled]="isProcessing" />
+              <mat-icon matSuffix>send</mat-icon>
+            </mat-form-field>
+            <button mat-flat-button color="accent" class="full-width"
+              [disabled]="isProcessing || !clarificationText.trim()" (click)="submitClarification()">
+              <span class="material-symbols-outlined btn-icon">send</span>
+              {{ isProcessing ? 'Updating…' : 'Submit Clarification' }}
+            </button>
+          </mat-card-content>
+        </mat-card>
+        }
+
+      </div>
+    </div>
+
+    <!-- New encounter button -->
+    <div class="result-footer">
+      <button mat-stroked-button (click)="reset()">
+        <span class="material-symbols-outlined btn-icon">refresh</span>
+        New Encounter
+      </button>
+    </div>
+  </div>
+  }
+
+  <!-- ── INTAKE TABS ─────────────────────────────────────────────────── -->
+  @if (!extractionResult) {
+  <mat-card appearance="outlined" class="intake-card">
+    <mat-tab-group mat-stretch-tabs="false" animationDuration="200ms" class="intake-tabs">
+
+      <!-- ═══ TAB 1 — VOICE RECORDING ═════════════════════════════════ -->
+      <mat-tab>
+        <ng-template mat-tab-label>
+          <span class="material-symbols-outlined tab-icon">mic</span>
+          Voice Recording
+        </ng-template>
+
+        <div class="tab-content">
+          <p class="mat-body-medium tab-subtitle">
+            Record in Dholuo, Swahili, Kikuyu, Somali, Luhya, or English &mdash;
+            including code-switching. Gemini transcribes and extracts clinical data automatically.
+          </p>
+
+          @if (!micAvailable) {
+          <mat-card appearance="outlined" class="warning-banner">
+            <mat-card-content>
+              <span class="material-symbols-outlined">mic_off</span>
+              Microphone not available. Check browser permissions.
+            </mat-card-content>
+          </mat-card>
+          }
+
+          <!-- Recorder card -->
+          <div class="recorder-card">
+
+            <!-- Waveform animation while recording -->
+            @if (isRecording) {
+            <div class="wave-container">
+              <div class="wave-bars">
+                @for (bar of [1,2,3,4,5,6,7]; track bar) {
+                <div class="wave-bar" [style.animation-delay]="(bar * 0.1) + 's'"></div>
+                }
+              </div>
+              <p class="mat-display-small timer">{{ getRecordingTimeDisplay() }}</p>
+              <p class="mat-label-medium muted">Recording…</p>
+            </div>
+            }
+
+            <!-- Idle / audio-ready state -->
+            @if (!isRecording) {
+            <div class="recorder-idle">
+              @if (!audioBlob) {
+              <span class="material-symbols-outlined mic-idle-icon">mic</span>
+              <p class="mat-body-medium muted">Tap the button to begin recording</p>
+              } @else {
+              <span class="material-symbols-outlined audio-ready-icon">check_circle</span>
+              <p class="mat-body-large audio-ready-text">Audio captured</p>
+              <p class="mat-label-small muted">{{ getRecordingTimeDisplay() }} recorded</p>
+              }
+            </div>
+            }
+
+            <!-- Controls -->
+            <div class="recorder-controls">
+              @if (!isRecording && !audioBlob) {
+              <button mat-fab color="primary" [disabled]="!micAvailable || isProcessing" (click)="startRecording()"
+                matTooltip="Start recording">
+                <span class="material-symbols-outlined">mic</span>
+              </button>
+              }
+              @if (isRecording) {
+              <button mat-fab color="warn" (click)="stopRecording()" class="pulsing-btn" matTooltip="Stop recording">
+                <span class="material-symbols-outlined">stop</span>
+              </button>
+              }
+              @if (audioBlob && !isRecording) {
+              <div class="audio-actions">
+                <button mat-flat-button color="primary" [disabled]="isProcessing" (click)="processAudio()">
+                  @if (isProcessing) {
+                  <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
+                  } @else {
+                  <span class="material-symbols-outlined btn-icon">psychology</span>
+                  }
+                  {{ isProcessing ? 'Analysing…' : 'Extract Clinical Data' }}
+                </button>
+                <button mat-stroked-button [disabled]="isProcessing" (click)="audioBlob = null; recordingTime = 0">
+                  <span class="material-symbols-outlined btn-icon">delete</span>
+                  Discard
+                </button>
+              </div>
+              }
             </div>
           </div>
         </div>
+      </mat-tab>
 
-        <!-- Clarification Dialog Box -->
-        <div class="report-card clarification-box" *ngIf="extractionResult.clarification_questions && extractionResult.clarification_questions.length > 0">
-          <div class="card-body">
-            <h4 class="warning-title">⚠️ Clarification Pending</h4>
-            <p class="clarification-hint">Gemini requested follow-up details to refine the clinical analysis:</p>
-            <ul class="clarification-questions">
-              <li *ngFor="let question of extractionResult.clarification_questions">
-                {{ question }}
-              </li>
-            </ul>
-            <div class="clarification-form">
-              <input
-                type="text"
-                [(ngModel)]="clarificationText"
-                placeholder="Type response to clinical questions..."
-                (keyup.enter)="submitClarification()"
-                [disabled]="isProcessing"
-                class="clarification-input"
-              />
-              <button
-                [disabled]="isProcessing || !clarificationText.trim()"
-                (click)="submitClarification()"
-                class="btn btn-clarify"
-              >
-                {{ isProcessing ? 'Updating...' : 'Submit Answers' }}
+      <!-- ═══ TAB 2 — WEB FORM ═════════════════════════════════════════ -->
+      <mat-tab>
+        <ng-template mat-tab-label>
+          <span class="material-symbols-outlined tab-icon">assignment</span>
+          Clinical Form
+        </ng-template>
+
+        <div class="tab-content">
+          <p class="mat-body-medium tab-subtitle">
+            Fill the structured encounter form. Chief complaint can be in any language.
+          </p>
+
+          <div class="form-grid">
+
+            <!-- Chief complaint — full width -->
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>Chief Complaint</mat-label>
+              <textarea matInput rows="3" [(ngModel)]="formData.chief_complaint"
+                placeholder="Describe symptoms in any language — e.g. 'Mtoto ana homa kali, kuhara'">
+                </textarea>
+              <mat-icon matSuffix>edit_note</mat-icon>
+              <mat-hint>Supports Dholuo, Swahili, Kikuyu, Somali, Luhya, and English</mat-hint>
+            </mat-form-field>
+
+            <!-- Symptoms chip input — full width -->
+            <div class="full-width symptom-field">
+              <mat-form-field appearance="outline" class="symptom-input">
+                <mat-label>Add Symptom</mat-label>
+                <input matInput [(ngModel)]="symptomInput" placeholder="e.g. fever, vomiting, diarrhoea"
+                  (keyup.enter)="addSymptom()" />
+                <button matSuffix mat-icon-button (click)="addSymptom()" matTooltip="Add symptom"
+                  [disabled]="!symptomInput.trim()">
+                  <mat-icon>add_circle</mat-icon>
+                </button>
+              </mat-form-field>
+              @if (formData.symptoms.length) {
+              <mat-chip-set class="symptom-chips">
+                @for (s of formData.symptoms; track s) {
+                <mat-chip (removed)="removeSymptom(s)">
+                  {{ s }}
+                  <button matChipRemove>
+                    <mat-icon>cancel</mat-icon>
+                  </button>
+                </mat-chip>
+                }
+              </mat-chip-set>
+              }
+            </div>
+
+            <!-- Age value -->
+            <mat-form-field appearance="outline">
+              <mat-label>Age</mat-label>
+              <input matInput type="number" [(ngModel)]="formData.age_value" min="0" placeholder="e.g. 3" />
+              <mat-icon matSuffix>person</mat-icon>
+            </mat-form-field>
+
+            <!-- Age unit -->
+            <mat-form-field appearance="outline">
+              <mat-label>Age Unit</mat-label>
+              <mat-select [(ngModel)]="formData.age_unit">
+                <mat-option value="years">Years</mat-option>
+                <mat-option value="months">Months</mat-option>
+                <mat-option value="weeks">Weeks</mat-option>
+                <mat-option value="days">Days</mat-option>
+              </mat-select>
+            </mat-form-field>
+
+            <!-- Sex -->
+            <mat-form-field appearance="outline">
+              <mat-label>Sex</mat-label>
+              <mat-select [(ngModel)]="formData.sex">
+                <mat-option value="">— Not specified —</mat-option>
+                <mat-option value="male">Male</mat-option>
+                <mat-option value="female">Female</mat-option>
+                <mat-option value="unknown">Unknown</mat-option>
+              </mat-select>
+              <mat-icon matSuffix>wc</mat-icon>
+            </mat-form-field>
+
+            <!-- Temperature -->
+            <mat-form-field appearance="outline">
+              <mat-label>Temperature (°C)</mat-label>
+              <input matInput type="number" step="0.1" min="30" max="45" [(ngModel)]="formData.temperature_c"
+                placeholder="e.g. 38.5" />
+              <mat-icon matSuffix>thermometer</mat-icon>
+            </mat-form-field>
+
+            <!-- Respiratory rate -->
+            <mat-form-field appearance="outline">
+              <mat-label>Respiratory Rate (/min)</mat-label>
+              <input matInput type="number" min="0" max="100" [(ngModel)]="formData.respiratory_rate"
+                placeholder="e.g. 28" />
+              <mat-icon matSuffix>pulmonology</mat-icon>
+            </mat-form-field>
+
+            <!-- Heart rate -->
+            <mat-form-field appearance="outline">
+              <mat-label>Heart Rate (bpm)</mat-label>
+              <input matInput type="number" min="0" max="300" [(ngModel)]="formData.heart_rate"
+                placeholder="e.g. 110" />
+              <mat-icon matSuffix>cardiology</mat-icon>
+            </mat-form-field>
+
+            <!-- Duration -->
+            <mat-form-field appearance="outline">
+              <mat-label>Duration (days)</mat-label>
+              <input matInput type="number" min="0" [(ngModel)]="formData.duration_days" placeholder="e.g. 3" />
+              <mat-icon matSuffix>schedule</mat-icon>
+            </mat-form-field>
+
+            <!-- County -->
+            <mat-form-field appearance="outline">
+              <mat-label>County</mat-label>
+              <mat-select [(ngModel)]="formData.county">
+                <mat-option value="">— Not specified —</mat-option>
+                @for (c of counties; track c) {
+                <mat-option [value]="c">{{ c }}</mat-option>
+                }
+              </mat-select>
+              <mat-icon matSuffix>location_on</mat-icon>
+            </mat-form-field>
+
+            <!-- Syndrome hint -->
+            <mat-form-field appearance="outline">
+              <mat-label>Suspected Syndrome (optional)</mat-label>
+              <mat-select [(ngModel)]="formData.syndrome_hint">
+                <mat-option value="">— Let AI decide —</mat-option>
+                @for (s of syndromes; track s) {
+                <mat-option [value]="s">{{ formatSyndrome(s) }}</mat-option>
+                }
+              </mat-select>
+              <mat-icon matSuffix>biotech</mat-icon>
+            </mat-form-field>
+
+            <!-- Language hint -->
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>Language of complaint (optional)</mat-label>
+              <input matInput [(ngModel)]="formData.language_hint" placeholder="e.g. Dholuo, Swahili, Kikuyu…" />
+              <mat-icon matSuffix>translate</mat-icon>
+            </mat-form-field>
+
+          </div>
+
+          <div class="form-actions">
+            <button mat-flat-button color="primary" [disabled]="isProcessing" (click)="submitForm()">
+              @if (isProcessing) {
+              <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
+              } @else {
+              <span class="material-symbols-outlined btn-icon">psychology</span>
+              }
+              {{ isProcessing ? 'Processing…' : 'Extract Clinical Data' }}
+            </button>
+          </div>
+        </div>
+      </mat-tab>
+
+      <!-- ═══ TAB 3 — TELEGRAM RELAY ══════════════════════════════════ -->
+      <mat-tab>
+        <ng-template mat-tab-label>
+          <span class="material-symbols-outlined tab-icon">forum</span>
+          Telegram Relay
+        </ng-template>
+
+        <div class="tab-content">
+          <p class="mat-body-medium tab-subtitle">
+            Paste a CHV's Telegram message to process it through the intake pipeline.
+            Language is auto-detected and translated if needed.
+          </p>
+
+          <!-- Info banner -->
+          <mat-card appearance="outlined" class="info-banner">
+            <mat-card-content>
+              <div class="info-banner-row">
+                <span class="material-symbols-outlined info-icon">info</span>
+                <span class="mat-body-small">
+                  Example CHV messages the system understands:<br>
+                  <em>"Nyithindo gi homa, ratiro — ok guoko kata madho"</em> (Dholuo)<br>
+                  <em>"Mtoto miaka 2, homa kali, kuhara maji"</em> (Swahili)
+                </span>
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <div class="telegram-form">
+
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>CHV ID / Telegram Username (optional)</mat-label>
+              <input matInput [(ngModel)]="telegramData.chw_id" placeholder="e.g. CHW-A1B2C3 or @chwusername" />
+              <mat-icon matSuffix>badge</mat-icon>
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>Telegram Message Text *</mat-label>
+              <textarea matInput rows="6" [(ngModel)]="telegramData.message_text"
+                placeholder="Paste the CHV's full Telegram message here…">
+                </textarea>
+              <mat-icon matSuffix>chat</mat-icon>
+              <mat-hint>Any language supported — Dholuo, Swahili, Kikuyu, Somali, Luhya, English</mat-hint>
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>Language Hint (optional)</mat-label>
+              <input matInput [(ngModel)]="telegramData.language_hint" placeholder="e.g. Dholuo, Swahili, Somali…" />
+              <mat-icon matSuffix>translate</mat-icon>
+            </mat-form-field>
+
+            <div class="form-actions">
+              <button mat-flat-button color="primary" [disabled]="isProcessing" (click)="relayTelegramMessage()">
+                @if (isProcessing) {
+                <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
+                } @else {
+                <span class="material-symbols-outlined btn-icon">send</span>
+                }
+                {{ isProcessing ? 'Processing…' : 'Process Telegram Message' }}
               </button>
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </mat-tab>
 
-    <!-- Actions Footer -->
-    <div class="report-footer">
-      <button (click)="resetExtraction()" class="btn btn-secondary">
-        🔄 Record New Encounter Case
-      </button>
-    </div>
-  </div>
+    </mat-tab-group>
+  </mat-card>
+  }
+
 </div>

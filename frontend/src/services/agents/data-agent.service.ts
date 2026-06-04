@@ -1,8 +1,8 @@
 /**
  * Data Agent Service
- * 
- * Stores and retrieves encounters from MongoDB with vector embeddings.
- * Enables semantic search and trend analysis on clinical data.
+ *
+ * All methods map to real orchestrator endpoints.
+ * Broken routes from earlier version replaced with correct equivalents.
  */
 
 import { Injectable } from '@angular/core';
@@ -10,12 +10,11 @@ import { ApiService } from '../api.service';
 
 export interface StoredEncounter {
   id: string;
-  encounter_json: any;
-  vector_embedding: number[];
-  timestamp: number;
+  encounter_id?: string;
+  encounter_json?: any;
+  timestamp?: number;
   chw_id?: string;
-  facilities_recommended?: string[];
-  metadata?: any;
+  [key: string]: any;
 }
 
 export interface SearchQuery {
@@ -24,83 +23,89 @@ export interface SearchQuery {
   location_filter?: { latitude: number; longitude: number; radius_km: number };
 }
 
-export interface SearchResult {
-  encounters: StoredEncounter[];
-  total_count: number;
-  relevance_scores: number[];
-}
-
-@Injectable({
-  providedIn: 'root'
-})
+@Injectable({ providedIn: 'root' })
 export class DataAgentService {
-  constructor(private api: ApiService) { }
+  constructor(private api: ApiService) {}
 
-    /**
-    * Insert a new encounter into MongoDB with vector embedding
-    */
-    async insertEncounter(request: { enriched_encounter: any }): Promise<StoredEncounter> {
-      return this.api.insertEncounter(request);
-    }
+  /** Insert a geo-enriched encounter into MongoDB. POST /tool/route_to_data */
+  async insertEncounter(request: { enriched_encounter: any }): Promise<any> {
+    return this.api.insertEncounter(request);
+  }
 
-  /**
-   * Search encounters by semantic similarity
-   */
-  async searchEncounters(query: SearchQuery): Promise<SearchResult> {
+  /** Vector/Atlas search across encounters. POST /tool/search_encounters */
+  async searchEncounters(query: SearchQuery): Promise<any> {
     return this.api.post('/tool/search_encounters', {
       query: query.query,
-      limit: query.limit || 10,
+      limit: query.limit ?? 10,
       location_filter: query.location_filter,
     });
   }
 
   /**
-   * Get encounter by ID
+   * Get pending follow-ups for a CHW.
+   * Replaces broken GET /encounters/{id} — use the real follow-ups endpoint.
+   * GET /tool/follow_ups/{chw_id}
    */
-  async getEncounter(encounterId: string): Promise<StoredEncounter> {
-    return this.api.get(`/encounters/${encounterId}`);
+  async getChwFollowUps(chwId: string, overdueOnly = false): Promise<any> {
+    return this.api.getChwFollowUps(chwId, overdueOnly);
   }
 
   /**
-   * Get all encounters for a CHW
+   * Get county follow-up summary (pending / completed / overdue).
+   * Replaces broken GET /encounters/chw/{id}.
+   * GET /tool/follow_up_summary/{county}
    */
-  async getEncountersByChw(chwId: string): Promise<StoredEncounter[]> {
-    return this.api.get(`/encounters/chw/${chwId}`);
+  async getFollowUpSummary(county: string): Promise<any> {
+    return this.api.getFollowUpSummary(county);
   }
 
-  /**
-   * Get trend analysis for encounters in a region
-   */
-  async getTrendAnalysis(request: {
-    region?: string;
-    time_range_days?: number;
-    symptom_filter?: string[];
+  /** Complete a follow-up task. POST /tool/complete_follow_up */
+  async completeFollowUp(body: {
+    follow_up_id: string;
+    outcome: 'improved' | 'stable' | 'deteriorated' | 'referred' | 'deceased';
+    notes?: string;
+    chw_id?: string;
   }): Promise<any> {
-    return this.api.post('/tool/trend_analysis', request);
+    return this.api.completeFollowUp(body);
+  }
+
+  /** Reschedule a follow-up. POST /tool/reschedule_follow_up */
+  async rescheduleFollowUp(body: {
+    follow_up_id: string;
+    days_from_now: number;
+    reason?: string;
+  }): Promise<any> {
+    return this.api.rescheduleFollowUp(body);
   }
 
   /**
-   * Delete an encounter (with proper audit trail)
+   * Get county surveillance stats — encounters, alerts, follow-ups, CHWs.
+   * Replaces broken /tool/trend_analysis.
+   * POST /tool/get_county_stats
    */
-  async deleteEncounter(encounterId: string): Promise<void> {
-    return this.api.post(`/encounters/${encounterId}/delete`, {});
+  async getCountyStats(county: string): Promise<any> {
+    return this.api.getCountyStats(county);
   }
 
-  /**
-   * Update encounter metadata
-   */
-  async updateEncounter(encounterId: string, updates: any): Promise<StoredEncounter> {
-    return this.api.post(`/encounters/${encounterId}/update`, {
-      updates,
-    });
+  /** Retrieve a protocol for a syndrome. GET /tool/protocol/{syndrome} */
+  async getProtocol(syndrome: string, county?: string): Promise<any> {
+    return this.api.getProtocol(syndrome, county);
   }
 
-  /**
-   * Check if Data Agent is available
-   */
+  /** Full-text search across protocols. POST /tool/search_protocols */
+  async searchProtocols(query: string, limit = 5): Promise<any> {
+    return this.api.searchProtocols(query, limit);
+  }
+
+  /** Batch-sync offline-queued encounters. POST /tool/sync_offline_encounters */
+  async syncOfflineEncounters(encounters: any[]): Promise<any> {
+    return this.api.syncOfflineEncounters(encounters);
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
-      return await this.api.get('/health/data');
+      await this.api.healthData();
+      return true;
     } catch {
       return false;
     }

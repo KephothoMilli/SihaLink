@@ -1,85 +1,87 @@
 /**
  * Data Agent UI Component
- * 
- * Interface for searching and managing stored encounters
+ *
+ * Search encounters, view follow-ups, and check county stats.
  */
 
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { DataAgentService, StoredEncounter, SearchResult } from '../../../services/agents/data-agent.service';
+import {
+  DataAgentService,
+  StoredEncounter,
+} from '../../../services/agents/data-agent.service';
 
 @Component({
-    selector: 'app-data-agent',
-    templateUrl: './data-agent.component.html',
-    styleUrl: './data-agent.component.css',
-    standalone: true,
-    imports: [CommonModule, FormsModule],
+  selector: 'app-data-agent',
+  templateUrl: './data-agent.component.html',
+  styleUrl: './data-agent.component.css',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
 })
 export class DataAgentComponent implements OnInit {
-    searchQuery: string = '';
-    searchResults: SearchResult | null = null;
-    isLoading = false;
-    error: string | null = null;
-    selectedEncounter: StoredEncounter | null = null;
+  searchQuery = '';
+  searchResults: any = null;
+  isLoading = false;
+  error: string | null = null;
+  selectedEncounter: StoredEncounter | null = null;
 
-    trendData: any = null;
-    showTrends = false;
-    trendRegion: string = '';
-    trendDays: number = 30;
+  // County stats (replaces the removed getTrendAnalysis)
+  countyStats: any = null;
+  showStats = false;
+  statsCounty = '';
 
-    constructor(private dataAgent: DataAgentService) { }
+  constructor(private dataAgent: DataAgentService) {}
 
-    ngOnInit() { }
+  ngOnInit() {}
 
-    async searchEncounters() {
-        if (!this.searchQuery.trim()) {
-            this.error = 'Please enter a search query';
-            return;
-        }
-
-        this.isLoading = true;
-        this.error = null;
-
-        try {
-            this.searchResults = await this.dataAgent.searchEncounters({
-                query: this.searchQuery,
-                limit: 20,
-            });
-        } catch (err) {
-            this.error = err instanceof Error ? err.message : 'Search failed';
-        } finally {
-            this.isLoading = false;
-        }
+  async searchEncounters() {
+    if (!this.searchQuery.trim()) {
+      this.error = 'Please enter a search query';
+      return;
     }
-
-    async selectEncounter(encounter: StoredEncounter) {
-        this.selectedEncounter = encounter;
+    this.isLoading = true;
+    this.error = null;
+    try {
+      this.searchResults = await this.dataAgent.searchEncounters({
+        query: this.searchQuery,
+        limit: 20,
+      });
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : 'Search failed';
+    } finally {
+      this.isLoading = false;
     }
+  }
 
-    async getTrendAnalysis() {
-        this.isLoading = true;
-        this.error = null;
+  selectEncounter(encounter: StoredEncounter) {
+    this.selectedEncounter = encounter;
+  }
 
-        try {
-            this.trendData = await this.dataAgent.getTrendAnalysis({
-                region: this.trendRegion,
-                time_range_days: this.trendDays,
-            });
-            this.showTrends = true;
-        } catch (err) {
-            this.error = err instanceof Error ? err.message : 'Failed to get trends';
-        } finally {
-            this.isLoading = false;
-        }
+  async getCountyStats() {
+    if (!this.statsCounty.trim()) {
+      this.error = 'Please enter a county name';
+      return;
     }
-
-    clearSelection() {
-        this.selectedEncounter = null;
+    this.isLoading = true;
+    this.error = null;
+    try {
+      this.countyStats = await this.dataAgent.getCountyStats(this.statsCounty);
+      this.showStats = true;
+    } catch (err) {
+      this.error =
+        err instanceof Error ? err.message : 'Failed to get county stats';
+    } finally {
+      this.isLoading = false;
     }
+  }
 
-    clearTrends() {
-        this.showTrends = false;
-        this.trendData = null;
-    }
+  clearSelection() {
+    this.selectedEncounter = null;
+  }
+
+  clearStats() {
+    this.showStats = false;
+    this.countyStats = null;
+  }
 }

@@ -1,135 +1,148 @@
 /**
  * Surveillance Agent Service
- * 
- * Processes encounter data for epidemiological surveillance.
- * Triggers alerts for disease outbreaks, trend anomalies, and public health patterns.
+ *
+ * All methods map to real orchestrator endpoints.
+ * Broken/missing endpoints from earlier version replaced with correct routes.
  */
 
 import { Injectable } from '@angular/core';
 import { ApiService } from '../api.service';
 
 export interface SurveillanceAlert {
-    alert_id: string;
-    alert_type: 'outbreak' | 'anomaly' | 'trend' | 'cluster';
-    title: string;
-    description: string;
-    severity: 'low' | 'medium' | 'high' | 'critical';
-    affected_region?: string;
-    case_count?: number;
-    threshold?: number;
-    actual_value?: number;
-    recommendations: string[];
-    created_at: number;
+  alert_id: string;
+  alert_type:
+    | 'outbreak'
+    | 'silent_pandemic'
+    | 'cross_county_spread'
+    | 'chw_outreach_gap'
+    | string;
+  syndrome: string;
+  location?: { county: string; ward?: string };
+  count?: number;
+  percent_above_baseline?: number;
+  detected_at?: string;
+  status?: string;
+  risk_level?: string;
+  escalation_level?: string;
+  recommended_actions?: string[];
+  [key: string]: any;
 }
 
-export interface SurveillanceReport {
-    report_id: string;
-    period: { start: number; end: number };
-    total_encounters: number;
-    unique_symptoms: string[];
-    top_symptoms: { symptom: string; count: number }[];
-    alerts: SurveillanceAlert[];
-    trend_analysis: any;
-}
-
-@Injectable({
-    providedIn: 'root'
-})
+@Injectable({ providedIn: 'root' })
 export class SurveillanceAgentService {
-    constructor(private api: ApiService) { }
+  constructor(private api: ApiService) {}
 
-    /**
-     * Trigger surveillance analysis on an encounter
-     */
-    async triggerSurveillance(request: {
-        encounter_id?: string;
-        encounter_data: any;
-    }): Promise<SurveillanceAlert[]> {
-        return this.api.post('/tool/trigger_surveillance', {
-            encounter_id: request.encounter_id,
-            encounter_data: request.encounter_data,
-        });
-    }
+  /**
+   * Trigger immediate outbreak detection for a county.
+   * POST /tool/trigger_surveillance
+   */
+  async triggerSurveillance(request: {
+    county: string;
+    lat?: number;
+    lng?: number;
+    immediate?: boolean;
+    hours?: number;
+  }): Promise<any> {
+    return this.api.triggerSurveillance(request);
+  }
 
-    /**
-     * Get surveillance alerts for a region
-     */
-    async getRegionAlerts(request: {
-        region: string;
-        start_date?: number;
-        end_date?: number;
-        alert_types?: string[];
-    }): Promise<SurveillanceAlert[]> {
-        return this.api.post('/tool/get_region_alerts', request);
-    }
+  /**
+   * Scan for silent pandemic signals (persistent weekly upward trend).
+   * POST /tool/silent_pandemic_scan
+   */
+  async silentPandemicScan(request: {
+    county: string;
+    weeks?: number;
+  }): Promise<any> {
+    return this.api.silentPandemicScan(request);
+  }
 
-    /**
-     * Get surveillance report for a specific period
-     */
-    async getSurveillanceReport(request: {
-        region?: string;
-        start_date: number;
-        end_date: number;
-    }): Promise<SurveillanceReport> {
-        return this.api.post('/tool/surveillance_report', request);
-    }
+  /**
+   * Get active outbreak alerts, optionally filtered by county.
+   * Replaces the broken /tool/get_region_alerts.
+   * POST /tool/query_active_alerts
+   */
+  async getRegionAlerts(request: {
+    region: string;
+  }): Promise<SurveillanceAlert[]> {
+    const res: any = await this.api.queryActiveAlerts({
+      county: request.region,
+    });
+    return res?.alerts ?? [];
+  }
 
-    /**
-     * Analyze symptom trends
-     */
-    async analyzeSymptomTrends(request: {
-        symptom?: string;
-        region?: string;
-        days?: number;
-    }): Promise<any> {
-        return this.api.post('/tool/analyze_symptom_trends', {
-            symptom: request.symptom,
-            region: request.region,
-            days: request.days || 30,
-        });
-    }
+  /**
+   * Detect cross-county spread of a syndrome.
+   * POST /tool/cross_county_spread
+   */
+  async detectCrossCountySpread(request: {
+    syndrome: string;
+    hours?: number;
+  }): Promise<any> {
+    return this.api.crossCountySpread(request);
+  }
 
-    /**
-     * Check for disease clusters
-     */
-    async checkDiseaseClusters(request: {
-        disease?: string;
-        region?: string;
-        radius_km?: number;
-        time_window_hours?: number;
-    }): Promise<any> {
-        return this.api.post('/tool/check_disease_clusters', {
-            disease: request.disease,
-            region: request.region,
-            radius_km: request.radius_km || 50,
-            time_window_hours: request.time_window_hours || 168,
-        });
-    }
+  /**
+   * Get county surveillance stats (encounters, alerts, follow-ups, active CHWs).
+   * Replaces the broken /tool/surveillance_report.
+   * POST /tool/get_county_stats
+   */
+  async getSurveillanceReport(request: { county: string }): Promise<any> {
+    return this.api.getCountyStats(request.county);
+  }
 
-    /**
-     * Get surveillance dashboard data
-     */
-    async getDashboardData(): Promise<any> {
-        return this.api.get('/surveillance/dashboard');
-    }
+  /**
+   * Identify wards with low CHW encounter submissions.
+   * Replaces the broken /tool/analyze_symptom_trends.
+   * POST /tool/chw_outreach_gaps
+   */
+  async analyzeSymptomTrends(request: {
+    county: string;
+    days?: number;
+  }): Promise<any> {
+    return this.api.chwOutreachGaps({
+      county: request.county,
+      days: request.days,
+    });
+  }
 
-    /**
-     * Export surveillance report
-     */
-    async exportReport(reportId: string, format: 'pdf' | 'csv' | 'json' = 'pdf'): Promise<Blob> {
-        const response = await fetch(`${this.api['base']}/surveillance/reports/${reportId}/export?format=${format}`);
-        if (!response.ok) throw new Error('Failed to export report');
-        return response.blob();
-    }
+  /**
+   * Detect cross-county spread clusters.
+   * Replaces the broken /tool/check_disease_clusters.
+   * POST /tool/cross_county_spread
+   */
+  async checkDiseaseClusters(request: {
+    disease?: string;
+    hours?: number;
+  }): Promise<any> {
+    return this.api.crossCountySpread({
+      syndrome: request.disease ?? '',
+      hours: request.hours,
+    });
+  }
 
-    /**
-     * Check if Surveillance Agent is available
-     */
-    async healthCheck(): Promise<boolean> {
-        try {
-            return await this.api.get('/health/surveillance');
-        } catch {
-            return false;
-        }
+  /**
+   * Get surveillance dashboard data.
+   * GET /surveillance/dashboard
+   */
+  async getDashboardData(): Promise<any> {
+    return this.api.get('/surveillance/dashboard');
+  }
+
+  /**
+   * Recalculate 4-week rolling baselines.
+   * POST /tool/update_baselines
+   */
+  async updateBaselines(county?: string): Promise<any> {
+    return this.api.updateBaselines({ county });
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.api.healthSurveillance();
+      return true;
+    } catch {
+      return false;
     }
+  }
 }

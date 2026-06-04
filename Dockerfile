@@ -72,7 +72,7 @@ stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
-environment=PYTHONUNBUFFERED="1",PORT="8080"
+environment=PYTHONUNBUFFERED="1",PORT="8080",DYNATRACE_ENV_ID="%(ENV_DYNATRACE_ENV_ID)s",DYNATRACE_API_TOKEN="%(ENV_DYNATRACE_API_TOKEN)s"
 
 [program:notify-agent]
 command=node agents/notify/dist/bot.js
@@ -85,7 +85,7 @@ stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
-environment=NOTIFY_PORT="3001"
+environment=NOTIFY_PORT="3001",DYNATRACE_ENV_ID="%(ENV_DYNATRACE_ENV_ID)s",DYNATRACE_API_TOKEN="%(ENV_DYNATRACE_API_TOKEN)s"
 
 [unix_http_server]
 file=/var/run/supervisor.sock

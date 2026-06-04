@@ -1,13 +1,64 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
-  <title>Frontend</title>
+  <title>SihaLink — Kenya National Disease Surveillance</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+
+  <!-- Roboto (Material 3 typeface) -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <!-- Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <!-- Material Symbols Outlined — variable-font icon set -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
+    rel="stylesheet">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+    Dynatrace Real User Monitoring (RUM) — agentless JS snippet
+    ═══════════════════════════════════════════════════════════════════════
+    HOW TO CONFIGURE:
+      1. In Dynatrace: Digital Experience → Web Applications → + New application
+      2. Copy the JavaScript snippet URL shown on the setup page
+      3. Replace REPLACE_WITH_YOUR_SCRIPT_PATH below with that path
+         Example: /jstag/17a3456abc/1234567890abcdef_complete.js
+
+    The snippet MUST be the first executable script in <head> so Dynatrace
+    hooks XHR and fetch before Angular bootstraps.
+
+    Reference: https://docs.dynatrace.com/docs/observe/digital-experience/
+               web-applications/initial-setup/snippet-formats
+
+    SAFE FALLBACK: If the script fails to load (dev, offline, wrong URL),
+    the inline dtrum stub below prevents any ReferenceError in Angular code.
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <!-- dtrum stub — always defined so Angular ErrorHandler never throws -->
+  <script>
+    window.dtrum = window.dtrum || {
+      reportError: function (e) { },
+      enterAction: function (n) { return 0; },
+      leaveAction: function (id) { },
+      sendSessionProperties: function (p) { },
+      addActionProperties: function (p) { },
+      setPage: function (p) { },
+      identifyUser: function (u) { },
+    };
+  </script>
+
+  <!-- Dynatrace RUM loader — replace path with your tenant's snippet URL -->
+  <script type="text/javascript" src="https://js-cdn.dynatrace.com/jstag/REPLACE_WITH_YOUR_SCRIPT_PATH_complete.js"
+    crossorigin="anonymous"
+    onerror="console.info('[Dynatrace] RUM script unavailable — app running without RUM monitoring')">
+    </script>
 </head>
-<body>
+
+<body class="mat-app-background">
   <app-root></app-root>
 </body>
+
 </html>

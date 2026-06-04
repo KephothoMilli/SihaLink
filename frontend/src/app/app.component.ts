@@ -11,6 +11,13 @@ import { RootAgentService } from '../services/root-agent.service';
 import { ApiService } from '../services/api.service';
 import { OfflineSyncService } from '../services/offline-sync.service';
 
+export interface AppToast {
+  id: number;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  icon: string;
+}
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
@@ -28,6 +35,11 @@ export class AppComponent implements OnInit, OnDestroy {
   isOnline = navigator.onLine;
   offlineQueueSize = 0;
   gateSession: any = null;
+
+  // Toast notification queue
+  toasts: AppToast[] = [];
+  private toastCounter = 0;
+  private lastAgentStatus: any = null;
 
   private onlineHandler = () => {
     this.isOnline = true;
@@ -61,9 +73,33 @@ export class AppComponent implements OnInit, OnDestroy {
       30_000,
     );
 
+    // Agent health toast notifications
+    this.agentStatus$.subscribe((status) => {
+      if (!status || !this.lastAgentStatus) {
+        this.lastAgentStatus = status;
+        return;
+      }
+      const agents = ['intake', 'geo', 'data', 'notify', 'surveillance'];
+      const labels: Record<string, string> = {
+        intake: '🎤 Intake', geo: '📍 Geo', data: '💾 Data',
+        notify: '📨 Notify', surveillance: '📊 Surveillance',
+      };
+      for (const agent of agents) {
+        const wasHealthy = this.lastAgentStatus[agent];
+        const isHealthy = status[agent];
+        if (!wasHealthy && isHealthy) {
+          this.showToast(`${labels[agent]} Agent is now online`, 'success', '✅');
+        } else if (wasHealthy && !isHealthy) {
+          this.showToast(`${labels[agent]} Agent went offline`, 'warning', '⚠️');
+        }
+      }
+      this.lastAgentStatus = status;
+    });
+
     this.rootAgent.sessionUpdates$.subscribe((session) => {
       if (session?.state === 'DECISION_GATE') {
         this.gateSession = session;
+        this.showToast('Clinical Gate requires your approval', 'warning', '🔔');
       } else if (
         this.gateSession &&
         session &&
@@ -76,6 +112,16 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.isOnline && this.offlineQueueSize > 0) {
       this.syncOfflineQueue();
     }
+  }
+
+  showToast(message: string, type: AppToast['type'] = 'info', icon = 'ℹ️') {
+    const id = ++this.toastCounter;
+    this.toasts.push({ id, message, type, icon });
+    setTimeout(() => this.dismissToast(id), 4000);
+  }
+
+  dismissToast(id: number) {
+    this.toasts = this.toasts.filter((t) => t.id !== id);
   }
 
   async confirmGate(confirmed: boolean) {

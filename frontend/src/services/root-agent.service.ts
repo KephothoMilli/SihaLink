@@ -157,11 +157,11 @@ export class RootAgentService {
         session.data.notifications = [notifyResult];
       }
 
-      // Step 6: Surveillance Agent - Trigger surveillance processing
+      // Step 6: Surveillance Agent - Trigger post-encounter surveillance check
       const surveillanceResult =
         await this.surveillanceAgent.triggerSurveillance({
-          encounter_id: storedResult?.id,
-          encounter_data: session.data.geoEnriched || extractionResult,
+          county: session.data.geoEnriched?.admin_hierarchy?.county ?? '',
+          immediate: false,
         });
       session.data.surveillanceData = surveillanceResult;
 

@@ -10,6 +10,23 @@ uvicorn[standard]>=0.32.0,<1.0.0
 pymongo[srv]==4.17.0
 motor==3.7.1
 
+# ── Dynatrace / OpenTelemetry ──────────────────────────────────────────────────
+# OTel SDK + OTLP HTTP exporter → Dynatrace ingest endpoint.
+# Core packages (api, sdk, exporter) are already installed via google-adk deps.
+# Pinned to >=1.24.0 to match what google-adk pulls in; the venv currently has 1.38.0.
+# Instrumentation packages are installed separately — see setup instructions below.
+#
+# To install in a network-connected environment:
+#   pip install opentelemetry-instrumentation-fastapi \
+#               opentelemetry-instrumentation-httpx \
+#               opentelemetry-instrumentation-pymongo \
+#               opentelemetry-instrumentation-logging
+#
+# Reference: https://docs.dynatrace.com/docs/ingest-from/opentelemetry/monitor
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-exporter-otlp-proto-http>=1.24.0
+
 # ── Google AI / ADK ────────────────────────────────────────────────────────────
 # Pin google-adk; let pip resolve google-genai to the compatible version.
 # google-adk 1.26.0 requires google-genai>=1.56.0,<2.0.0

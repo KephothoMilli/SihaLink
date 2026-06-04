@@ -30,7 +30,6 @@
               }
             ],
             "styles": [
-              "src/styles.css",
               "src/styles.scss"
             ]
           },
@@ -44,8 +43,8 @@
                 },
                 {
                   "type": "anyComponentStyle",
-                  "maximumWarning": "4kB",
-                  "maximumError": "8kB"
+                  "maximumWarning": "12kB",
+                  "maximumError": "20kB"
                 }
               ],
               "outputHashing": "all"
@@ -88,7 +87,6 @@
               }
             ],
             "styles": [
-              "src/styles.css",
               "src/styles.scss"
             ]
           }

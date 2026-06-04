@@ -82,6 +82,40 @@ export class ApiService {
     });
   }
 
+  /** Submit a structured clinical web form to the intake pipeline. */
+  intakeForm(formData: {
+    chief_complaint: string;
+    symptoms?: string[];
+    age_value?: number;
+    age_unit?: string;
+    sex?: string;
+    temperature_c?: number;
+    respiratory_rate?: number;
+    heart_rate?: number;
+    duration_days?: number;
+    syndrome_hint?: string;
+    language_hint?: string;
+    county?: string;
+  }) {
+    return this.post('/intake/form', {
+      session_id: `form-${Date.now()}`,
+      form_data: formData,
+    });
+  }
+
+  /** Relay a CHV Telegram message through the intake pipeline. */
+  intakeTelegram(body: {
+    chw_id: string;
+    message_text: string;
+    audio_base64?: string;
+    language_hint?: string;
+  }) {
+    return this.post('/intake/telegram', {
+      session_id: `tg-${body.chw_id}-${Date.now()}`,
+      ...body,
+    });
+  }
+
   /** Refine a previous extraction with a CHV clarification answer. */
   clarifyExtraction(body: {
     original_extraction: any;
@@ -303,38 +337,18 @@ export class ApiService {
   health() {
     return this.get('/health');
   }
-
-  /**
-   * Get Data Agent health
-   */
   healthData() {
     return this.get('/health/data');
   }
-
-  /**
-   * Get Geo Agent health
-   */
   healthGeo() {
     return this.get('/health/geo');
   }
-
-  /**
-   * Get Intake Agent health
-   */
   healthIntake() {
     return this.get('/health/intake');
   }
-
-  /**
-   * Get Notify Agent health
-   */
   healthNotify() {
     return this.get('/health/notify');
   }
-
-  /**
-   * Get Surveillance Agent health
-   */
   healthSurveillance() {
     return this.get('/health/surveillance');
   }

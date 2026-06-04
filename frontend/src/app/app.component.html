@@ -136,4 +136,21 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Toast Notification Stack ────────────────────────────── -->
+  <div class="toast-stack" *ngIf="toasts.length > 0">
+    <div
+      *ngFor="let toast of toasts"
+      class="toast-item animate-toast-in"
+      [class.toast-success]="toast.type === 'success'"
+      [class.toast-warning]="toast.type === 'warning'"
+      [class.toast-error]="toast.type === 'error'"
+      [class.toast-info]="toast.type === 'info'"
+    >
+      <span class="toast-icon">{{ toast.icon }}</span>
+      <span class="toast-message">{{ toast.message }}</span>
+      <button class="toast-close" (click)="dismissToast(toast.id)">✕</button>
+    </div>
+  </div>
+
 </div>

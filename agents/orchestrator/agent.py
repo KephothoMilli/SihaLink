@@ -19,6 +19,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+logger = logging.getLogger("SihaLink-Orchestrator")
+
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -39,7 +41,23 @@ from agents.geo.maps_client import GeoAgent
 from agents.data.mcp_client import DataAgent
 from agents.surveillance.agent import SurveillanceAgent
 
-logger = logging.getLogger("SihaLink-Orchestrator")
+# ── Dynatrace / OpenTelemetry bootstrap ──────────────────────────────────────
+# Must run before agent/db instantiation so instrumentation patches apply first.
+from .telemetry import init_telemetry, get_tracer
+
+_telemetry_active = init_telemetry()
+
+if _telemetry_active:
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from opentelemetry.instrumentation.pymongo import PymongoInstrumentor
+        HTTPXClientInstrumentor().instrument()   # traces all httpx calls (Gemini, Maps, Telegram)
+        PymongoInstrumentor().instrument()        # traces every MongoDB query
+        logger.info("[Telemetry] HTTPx + PyMongo auto-instrumentation active")
+    except ImportError:
+        logger.debug("[Telemetry] Auto-instrumentation packages not installed")
+
+_tracer = get_tracer("sihalink.orchestrator")
 
 # ---------------------------------------------------------------------------
 # Notify Agent HTTP shim
@@ -692,6 +710,15 @@ async def _lifespan(fastapi_app):
 
 
 app = FastAPI(title="SihaLink Orchestrator", lifespan=_lifespan)
+
+# ── Dynatrace: auto-instrument every FastAPI request ─────────────────────────
+if _telemetry_active:
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("[Telemetry] FastAPI auto-instrumentation active")
+    except ImportError:
+        pass
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -739,7 +766,15 @@ async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundT
     coords = {"lat": payload.get("latitude", 0.0), "lng": payload.get("longitude", 0.0)}
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-    background_tasks.add_task(orchestrator.run_lifecycle, session_id, audio, coords)
+
+    # Custom Dynatrace span — marks the start of the full encounter pipeline
+    with _tracer.start_as_current_span("encounter.start") as span:
+        span.set_attribute("encounter.session_id", session_id)
+        span.set_attribute("encounter.has_audio", bool(audio))
+        span.set_attribute("encounter.latitude", coords["lat"])
+        span.set_attribute("encounter.longitude", coords["lng"])
+        background_tasks.add_task(orchestrator.run_lifecycle, session_id, audio, coords)
+
     return {"status": "processing", "session_id": session_id}
 
 

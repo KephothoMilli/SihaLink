@@ -718,3 +718,6 @@ details pre {
     flex-direction: column;
   }
 }
+
+/* Premium Medical Shell - all body overrides handled via :root + body above */
+html { height: 100%; }

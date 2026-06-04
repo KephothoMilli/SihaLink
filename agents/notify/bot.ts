@@ -9,7 +9,58 @@
  *
  * Backend bridge: every command calls http://localhost:8000 (BACKEND_URL)
  * Inbound HTTP:   Python orchestrator calls /notify/referral and /notify/outbreak_alert
+ *
+ * Observability: Dynatrace via OpenTelemetry OTLP (traces every HTTP call)
  */
+
+// ── Dynatrace / OpenTelemetry bootstrap ──────────────────────────────────────
+// Must be the FIRST code executed so auto-instrumentation can patch Node.js
+// HTTP, Fastify, and fetch before they are imported.
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { Resource } from "@opentelemetry/resources";
+import {
+  SEMRESATTRS_SERVICE_NAME,
+  SEMRESATTRS_SERVICE_VERSION,
+  SEMRESATTRS_DEPLOYMENT_ENVIRONMENT,
+} from "@opentelemetry/semantic-conventions";
+
+const DT_ENV_ID = process.env.DYNATRACE_ENV_ID;
+const DT_API_TOKEN = process.env.DYNATRACE_API_TOKEN;
+
+if (DT_ENV_ID && DT_API_TOKEN) {
+  const sdk = new NodeSDK({
+    resource: new Resource({
+      [SEMRESATTRS_SERVICE_NAME]: "sihalink-notify-agent",
+      [SEMRESATTRS_SERVICE_VERSION]: "1.0.0",
+      [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]:
+        process.env.ENVIRONMENT ?? "production",
+    }),
+    traceExporter: new OTLPTraceExporter({
+      url: `https://${DT_ENV_ID}.live.dynatrace.com/api/v2/otlp/v1/traces`,
+      headers: { Authorization: `Api-Token ${DT_API_TOKEN}` },
+    }),
+    instrumentations: [
+      getNodeAutoInstrumentations({
+        // Instrument all outgoing HTTP calls (to Python backend + Telegram API)
+        "@opentelemetry/instrumentation-http": { enabled: true },
+        "@opentelemetry/instrumentation-fetch": { enabled: true },
+      }),
+    ],
+  });
+
+  sdk.start();
+  process.on("SIGTERM", () => sdk.shutdown());
+  console.log(
+    `✅ Dynatrace OTel active → https://${DT_ENV_ID}.live.dynatrace.com`,
+  );
+} else {
+  console.log(
+    "ℹ️  DYNATRACE_ENV_ID / DYNATRACE_API_TOKEN not set — telemetry disabled",
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 import Fastify, { FastifyRequest, FastifyReply } from "fastify";
 import { Bot, session, InlineKeyboard, Context, SessionFlavor } from "grammy";
