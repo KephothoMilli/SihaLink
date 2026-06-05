@@ -181,14 +181,16 @@ def interpret_multilingual_input(
         return _keyword_fallback(text, source_language)
 
     try:
-        from google import generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-flash-latest")
+        from google import genai
+        client = genai.Client(api_key=api_key)
 
         prompt = _build_translation_prompt(text, source_language, context)
         logger.info("[LanguageAgent] 🌍 Translating input (hint: %s)...", source_language or "auto-detect")
 
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         raw = getattr(resp, "text", str(resp))
         result = _parse_translation_json(raw)
         result["original_text"] = text
@@ -236,16 +238,18 @@ def get_clarification_prompt(question_english: str, target_language: str) -> str
         return question_english
 
     try:
-        from google import generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-flash-latest")
+        from google import genai
+        client = genai.Client(api_key=api_key)
         prompt = (
             f"Translate this clinical question to {target_language}. "
             f"Keep it simple, short, and appropriate for a community health worker.\n"
             f"Return ONLY the translated text, no explanation.\n\n"
             f"Question: {question_english}"
         )
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         translated = getattr(resp, "text", question_english).strip()
         logger.info("[LanguageAgent] 🗣️ Translated question to %s: '%s'", target_language, translated[:60])
         return translated

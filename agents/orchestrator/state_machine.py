@@ -37,6 +37,7 @@ class EncounterState(Enum):
     STORING            = "STORING"
     ALERTING           = "ALERTING"
     DECISION_GATE      = "DECISION_GATE"
+    CLARIFICATION_GATE = "CLARIFICATION_GATE"
     NOTIFYING          = "NOTIFYING"
     FOLLOW_UP_SCHEDULED = "FOLLOW_UP_SCHEDULED"   # follow-ups written to MongoDB
     COMPLETE           = "COMPLETE"
@@ -66,13 +67,19 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     async def run_lifecycle(
-        self, session_id: str, audio_payload: str, coords: Dict[str, float]
+        self,
+        session_id: str,
+        audio_payload: str = "",
+        coords: Dict[str, float] = None,
+        form_data: Optional[Dict] = None,
+        telegram_payload: Optional[Dict] = None,
     ):
         """
         Full lifecycle for a single CHV encounter.
 
         Steps:
-          1. EXTRACTING        — audio → clinical JSON (Gemini Live API)
+          1. EXTRACTING        — audio/text/form → clinical JSON (Gemini Live API)
+          1b. CLARIFICATION    — pause and loop up to 2 rounds if clarification needed
           2. GEOCODING         — GPS → admin hierarchy + facilities (Google Maps)
           3. STORING           — insert into MongoDB with vector embedding
           4. FOLLOW_UP_SCHEDULED — auto-schedule follow-up tasks (non-fatal)
@@ -81,6 +88,9 @@ class Orchestrator:
           7. NOTIFYING         — Telegram dispatch (confirmed RED/YELLOW only)
           8. COMPLETE
         """
+        if not coords:
+            coords = {"lat": 0.0, "lng": 0.0}
+
         self.sessions[session_id] = {
             "state": EncounterState.LISTENING,
             "started_at": datetime.utcnow().isoformat(),
@@ -89,14 +99,70 @@ class Orchestrator:
         logger.info("▶ Session %s started", session_id)
 
         try:
-            # 1. INTAKE — speech → clinical JSON
-            extracted_json = await self._transition(
-                session_id,
-                EncounterState.EXTRACTING,
-                self.intake.process_audio,
-                audio_payload,
-            )
+            # 1. INTAKE — speech/text/form → clinical JSON
+            if form_data:
+                extracted_json = await self._transition(
+                    session_id,
+                    EncounterState.EXTRACTING,
+                    self.intake.process_form,
+                    form_data,
+                    session_id,
+                )
+            elif telegram_payload:
+                extracted_json = await self._transition(
+                    session_id,
+                    EncounterState.EXTRACTING,
+                    self.intake.process_telegram,
+                    telegram_payload.get("message_text"),
+                    telegram_payload.get("audio_base64"),
+                    telegram_payload.get("chw_id", "unknown"),
+                    session_id,
+                    telegram_payload.get("language_hint"),
+                )
+            else:
+                extracted_json = await self._transition(
+                    session_id,
+                    EncounterState.EXTRACTING,
+                    self.intake.process_audio,
+                    audio_payload,
+                )
+
+            # 1b. CLARIFICATION GATE — pause and ask questions if needed
+            rounds = 0
+            while extracted_json.get("clarification_needed") and rounds < 2:
+                question = extracted_json.get("clarification_question", "Please provide more details.")
+                answer = await self._wait_for_clarification_gate(session_id, question)
+                if not answer:
+                    break
+                # Call clarify on intake agent
+                extracted_json = await self._transition(
+                    session_id,
+                    EncounterState.EXTRACTING,
+                    self.intake.clarify,
+                    extracted_json,
+                    answer,
+                    session_id,
+                )
+                rounds += 1
+
             self.sessions[session_id]["extracted"] = extracted_json
+
+            # Notify CHV of analysis completion if triggered from Telegram
+            triage = extracted_json.get("triage_color", "GREEN")
+            emoji = "🔴" if triage == "RED" else "🟡" if triage == "YELLOW" else "🟢"
+            conf = round(extracted_json.get("confidence", 0) * 100)
+            text = (
+                f"{emoji} *Encounter Analysis Complete*\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"*Syndrome:*  {extracted_json.get('syndrome', '—')}\n"
+                f"*Triage:*    {triage}\n"
+                f"*Complaint:* {extracted_json.get('chief_complaint', '—')}\n"
+                f"*Confidence:* {conf}%\n"
+                f"*Session:* `{session_id}`"
+            )
+            if session_id.startswith("tg-"):
+                chat_id = session_id.split("-")[1]
+                await self.notify.dispatch_message(chat_id, text)
 
             # 2. GEOCODING — GPS → admin hierarchy + facilities
             enriched_json = await self._transition(
@@ -136,7 +202,6 @@ class Orchestrator:
                 )
 
             # 4. ALERTING — create referral/alert record for RED/YELLOW
-            triage = enriched_json.get("extracted", {}).get("triage_color", "GREEN")
             if triage in ("RED", "YELLOW"):
                 referral_id = await self._transition(
                     session_id,
@@ -173,10 +238,61 @@ class Orchestrator:
             self.sessions[session_id]["completed_at"] = datetime.utcnow().isoformat()
             logger.info("✅ Session %s completed successfully.", session_id)
 
+            if session_id.startswith("tg-"):
+                chat_id = session_id.split("-")[1]
+                if triage == "RED":
+                    await self.notify.dispatch_message(
+                        chat_id,
+                        "🔴 *URGENT* — referral dispatched automatically to nearest facility."
+                    )
+                elif triage == "GREEN":
+                    await self.notify.dispatch_message(
+                        chat_id,
+                        "🟢 Logged for routine 7-day follow-up. Thank you."
+                    )
+
         except Exception as exc:
             logger.error("❌ Lifecycle failure for %s: %s", session_id, exc)
             self.sessions[session_id]["state"] = EncounterState.FAILED
             self.sessions[session_id]["error"] = str(exc)
+            if session_id.startswith("tg-"):
+                chat_id = session_id.split("-")[1]
+                await self.notify.dispatch_message(
+                    chat_id,
+                    f"❌ Encounter processing failed: {str(exc)}\nPlease try again or contact support."
+                )
+
+    # ------------------------------------------------------------------
+    # Clarification Gate
+    # ------------------------------------------------------------------
+
+    async def _wait_for_clarification_gate(self, session_id: str, question: str) -> str:
+        """
+        Pauses the lifecycle and waits for the CHV to answer the clarification question
+        via POST /encounter/{session_id}/clarify.
+        """
+        self.sessions[session_id]["state"] = EncounterState.CLARIFICATION_GATE
+        self.sessions[session_id]["gate_data"] = {
+            "question": question,
+        }
+        logger.info("⏳ Waiting for CHV clarification — session %s", session_id)
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        self._pending_gates[session_id] = future
+
+        if session_id.startswith("tg-"):
+            chat_id = session_id.split("-")[1]
+            await self.notify.dispatch_message(chat_id, f"❓ {question}")
+
+        try:
+            answer = await asyncio.wait_for(asyncio.shield(future), timeout=60)
+            return answer
+        except asyncio.TimeoutError:
+            logger.warning("Gate timeout for %s (clarification)", session_id)
+            return ""
+        finally:
+            self._pending_gates.pop(session_id, None)
 
     # ------------------------------------------------------------------
     # State transition helper with retry + exponential backoff
@@ -235,6 +351,20 @@ class Orchestrator:
 
         triage = data.get("extracted", {}).get("triage_color", "YELLOW")
         timeout = 60
+
+        if session_id.startswith("tg-"):
+            chat_id = session_id.split("-")[1]
+            reply_markup = {
+                "inline_keyboard": [[
+                    {"text": "✅ Confirm Referral", "callback_data": f"confirm_{session_id}"},
+                    {"text": "❌ Decline", "callback_data": f"decline_{session_id}"}
+                ]]
+            }
+            await self.notify.dispatch_message(
+                chat_id,
+                "Confirm patient referral to nearest facility?",
+                reply_markup=reply_markup
+            )
 
         try:
             result = await asyncio.wait_for(asyncio.shield(future), timeout=timeout)

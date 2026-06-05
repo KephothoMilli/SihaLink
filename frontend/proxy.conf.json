@@ -24,6 +24,16 @@
     "secure": false,
     "changeOrigin": true
   },
+  "/surveillance": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/adk": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
   "/notifications": {
     "target": "http://localhost:8000",
     "secure": false,

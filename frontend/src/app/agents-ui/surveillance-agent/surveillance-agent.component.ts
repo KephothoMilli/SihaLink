@@ -16,7 +16,7 @@ import {
 @Component({
   selector: 'app-surveillance-agent',
   templateUrl: './surveillance-agent.component.html',
-  styleUrl: './surveillance-agent.component.css',
+  styleUrl: './surveillance-agent.component.scss',
   standalone: true,
   imports: [CommonModule, FormsModule],
 })
@@ -129,5 +129,52 @@ export class SurveillanceAgentComponent implements OnInit {
       default:
         return '#388e3c';
     }
+  }
+
+  getRiskColor(level: string): string {
+    const l = (level ?? '').toUpperCase();
+    if (l === 'HIGH' || l === 'CRITICAL' || l === 'RED') return '#d32f2f';
+    if (l === 'MEDIUM' || l === 'YELLOW' || l === 'ORANGE') return '#f57c00';
+    if (l === 'LOW' || l === 'GREEN') return '#388e3c';
+    return '#0288d1';
+  }
+
+  getAlertIcon(syndrome: string): string {
+    const s = (syndrome ?? '').toLowerCase();
+    if (s.includes('ebola') || s.includes('hemorrhagic')) return 'emergency';
+    if (s.includes('cholera') || s.includes('diarrhea')) return 'water_drop';
+    if (
+      s.includes('respiratory') ||
+      s.includes('pneumonia') ||
+      s.includes('covid')
+    )
+      return 'pulmonology';
+    if (s.includes('measles') || s.includes('rash')) return 'sick';
+    if (s.includes('malaria') || s.includes('fever')) return 'thermometer';
+    if (s.includes('malnutrition')) return 'monitor_weight';
+    return 'coronavirus';
+  }
+
+  getSyndromeColor(syndrome: string): string {
+    const palette: Record<string, string> = {
+      measles: '#d32f2f',
+      cholera: '#1565c0',
+      acute_respiratory_infection: '#6a1b9a',
+      acute_febrile_illness: '#e65100',
+      malaria: '#2e7d32',
+      tuberculosis: '#4e342e',
+      pneumonia: '#0277bd',
+      ebola: '#b71c1c',
+      dengue: '#f9a825',
+      typhoid: '#558b2f',
+      malnutrition_severe: '#4527a0',
+      meningitis: '#ad1457',
+    };
+    return palette[syndrome] ?? '#0288d1';
+  }
+
+  getBreakdownPct(count: number, breakdown: Array<{ count: number }>): number {
+    const max = Math.max(...breakdown.map((b) => b.count), 1);
+    return Math.round((count / max) * 100);
   }
 }

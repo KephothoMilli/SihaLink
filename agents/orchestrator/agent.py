@@ -96,9 +96,13 @@ class NotifyAgentClient:
 
     async def dispatch_outbreak_alert(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         try:
+            import json
+            payload_str = json.dumps({"alert": alert}, default=str)
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
-                    f"{NOTIFY_BASE}/notify/outbreak_alert", json={"alert": alert}
+                    f"{NOTIFY_BASE}/notify/outbreak_alert", 
+                    content=payload_str,
+                    headers={"Content-Type": "application/json"}
                 )
                 resp.raise_for_status()
                 return resp.json()
@@ -123,7 +127,10 @@ orchestrator = Orchestrator(intake_agent, geo_agent, data_agent, notify_agent)
 # ---------------------------------------------------------------------------
 from agents.swarm import SwarmController
 
+from agents.contact_tracing.agent import ContactTracingAgent
+
 swarm = SwarmController.get()
+contact_tracing_agent = ContactTracingAgent()
 swarm.initialise(
     intake=intake_agent,
     geo=geo_agent,
@@ -131,6 +138,7 @@ swarm.initialise(
     notify=notify_agent,
     surveillance=surveillance_agent,
     orchestrator=orchestrator,
+    contact_tracing=contact_tracing_agent,
 )
 
 # ---------------------------------------------------------------------------
@@ -692,6 +700,53 @@ _runner = Runner(
     session_service=_session_service,
 )
 
+# ── Agentic message handler ───────────────────────────────────────────────────
+# Per-user persistent sessions so Gemini maintains conversation context
+# across multiple Telegram messages from the same CHW.
+
+async def run_agentic_message(
+    user_id: str,
+    message: str,
+    session_id: Optional[str] = None,
+) -> str:
+    """
+    Route a user message through the ADK orchestrator runner.
+    Gemini decides which tools to call, chains them autonomously,
+    and returns a natural language response.
+
+    Used by:
+      - POST /encounter/respond  (Telegram text relay)
+      - POST /adk/run            (direct ADK invocation)
+    """
+    sid = session_id or f"tg-{user_id}"
+
+    # Ensure session exists — create if first message from this user
+    try:
+        await _session_service.get_session(
+            app_name=APP_NAME, user_id=user_id, session_id=sid
+        )
+    except Exception:
+        await _session_service.create_session(
+            app_name=APP_NAME, user_id=user_id, session_id=sid
+        )
+
+    final_text = ""
+    async for event in _runner.run_async(
+        user_id=user_id,
+        session_id=sid,
+        new_message=genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=message)],
+        ),
+    ):
+        if event.is_final_response() and event.content:
+            parts = event.content.parts or []
+            final_text = " ".join(
+                p.text for p in parts if hasattr(p, "text") and p.text
+            )
+
+    return final_text or "✅ Request processed."
+
 # ---------------------------------------------------------------------------
 # FastAPI app — Agent Runtime HTTP interface
 # ---------------------------------------------------------------------------
@@ -703,6 +758,12 @@ from contextlib import asynccontextmanager
 async def _lifespan(fastapi_app):
     """Start the autonomous swarm on startup; shut it down cleanly on exit."""
     logger.info("[Orchestrator] 🚀 Starting SihaLink — Kenya National Disease Surveillance")
+    try:
+        from agents.data.agent import create_vector_search_index
+        idx_res = create_vector_search_index()
+        logger.info(f"[Orchestrator] Vector Index Status: {idx_res}")
+    except Exception as e:
+        logger.error(f"[Orchestrator] Vector Index Error: {e}")
     await swarm.start()
     yield
     logger.info("[Orchestrator] 🛑 Shutting down SihaLink swarm")
@@ -760,22 +821,50 @@ async def health_check():
 @app.post("/encounter/start")
 @app.post("/tool/start_encounter")
 async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundTasks):
-    """ADK tool: Initialize a session and run the background state machine."""
+    """
+    Unified encounter start — accepts audio, web-form, or Telegram payloads.
+    Kicks off the full state-machine lifecycle as a background task.
+
+    Body (all optional except session_id):
+        session_id       — required
+        audio_base64     — raw audio for voice intake
+        form_data        — structured clinical form (web UI)
+        telegram_payload — {chw_id, message_text, audio_base64, language_hint}
+        latitude / longitude — GPS coordinates
+    """
     session_id = payload.get("session_id")
-    audio = payload.get("audio_base64", "")
-    coords = {"lat": payload.get("latitude", 0.0), "lng": payload.get("longitude", 0.0)}
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
+
+    audio = payload.get("audio_base64", "")
+    coords = {"lat": payload.get("latitude", 0.0), "lng": payload.get("longitude", 0.0)}
+    form_data = payload.get("form_data")
+    telegram_payload = payload.get("telegram_payload")
+
+    # Determine intake source for tracing
+    source = "audio"
+    if form_data:
+        source = "form"
+    elif telegram_payload:
+        source = "telegram"
 
     # Custom Dynatrace span — marks the start of the full encounter pipeline
     with _tracer.start_as_current_span("encounter.start") as span:
         span.set_attribute("encounter.session_id", session_id)
+        span.set_attribute("encounter.source", source)
         span.set_attribute("encounter.has_audio", bool(audio))
         span.set_attribute("encounter.latitude", coords["lat"])
         span.set_attribute("encounter.longitude", coords["lng"])
-        background_tasks.add_task(orchestrator.run_lifecycle, session_id, audio, coords)
+        background_tasks.add_task(
+            orchestrator.run_lifecycle,
+            session_id,
+            audio,
+            coords,
+            form_data=form_data,
+            telegram_payload=telegram_payload,
+        )
 
-    return {"status": "processing", "session_id": session_id}
+    return {"status": "processing", "session_id": session_id, "source": source}
 
 
 @app.get("/encounter/{session_id}/status")
@@ -800,6 +889,87 @@ async def confirm_encounter(session_id: str, payload: Dict[str, Any]):
     if not success:
         raise HTTPException(status_code=404, detail="No pending gate for this session")
     return {"session_id": session_id, "confirmed": confirmed}
+
+
+@app.post("/encounter/{session_id}/clarify")
+async def clarify_encounter(session_id: str, payload: Dict[str, Any]):
+    """
+    Submit a clarification answer for an encounter in CLARIFICATION_GATE state.
+    The lifecycle coroutine is paused and waiting for this to resolve its Future.
+    """
+    answer = payload.get("answer", "").strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="answer is required")
+    future = orchestrator._pending_gates.get(session_id)
+    if not future or future.done():
+        raise HTTPException(
+            status_code=404,
+            detail="No active clarification gate for this session",
+        )
+    future.set_result(answer)
+    return {"session_id": session_id, "status": "resolved", "gate": "clarification"}
+
+
+@app.post("/encounter/gate/respond")
+async def respond_to_gate(payload: Dict[str, Any]):
+    """
+    Gate-resolution endpoint for Telegram bot text responses.
+    Resolves an active CLARIFICATION or DECISION gate keyed by chat_id.
+
+    Body:
+        chat_id  — Telegram chat ID
+        text     — CHV's free-text answer (for CLARIFICATION)
+        confirm  — Boolean (for DECISION_GATE)
+    """
+    from .state_machine import EncounterState
+
+    chat_id = str(payload.get("chat_id", ""))
+    text = payload.get("text", "").strip()
+    confirm = payload.get("confirm")  # None means text-only / clarification
+
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="chat_id is required")
+
+    # Find the most recent tg- session for this chat_id that has an active gate
+    matching_sid: Optional[str] = None
+    for sid, future in orchestrator._pending_gates.items():
+        if not future.done() and sid.startswith(f"tg-{chat_id}-"):
+            matching_sid = sid
+            break
+
+    if not matching_sid:
+        return {"status": "no_gate", "message": "No active gate found for this chat"}
+
+    session = orchestrator.sessions.get(matching_sid, {})
+    state = session.get("state")
+    future = orchestrator._pending_gates[matching_sid]
+
+    if state == EncounterState.CLARIFICATION_GATE:
+        if not text:
+            return {"status": "error", "message": "Text answer required for clarification gate"}
+        future.set_result(text)
+        return {
+            "status": "resolved",
+            "session_id": matching_sid,
+            "gate": "clarification",
+        }
+
+    elif state == EncounterState.DECISION_GATE:
+        if confirm is None:
+            return {"status": "error", "message": "confirm (bool) required for decision gate"}
+        future.set_result(bool(confirm))
+        return {
+            "status": "resolved",
+            "session_id": matching_sid,
+            "gate": "decision",
+            "confirmed": bool(confirm),
+        }
+
+    else:
+        return {
+            "status": "no_gate",
+            "message": f"Session {matching_sid} is in state {state}, no active gate",
+        }
 
 
 @app.post("/tool/route_to_intake")
@@ -889,6 +1059,24 @@ async def api_route_to_notify(payload: Dict[str, Any]):
     else:
         result = {"delivered": False, "note": f"Unknown type: {notification_type}"}
     return {"status": "notified", "result": result}
+
+
+# --- Mock Notification Endpoints for UI ---
+@app.get("/notifications/recipients")
+async def get_recipients():
+    return []
+
+@app.post("/tool/register_recipient")
+async def api_register_recipient(payload: Dict[str, Any]):
+    return {"status": "ok", "recipient": payload}
+
+@app.get("/notifications/encounter/{encounter_id}")
+async def get_notification_history(encounter_id: str):
+    return {"history": []}
+
+@app.get("/notifications/{notification_id}")
+async def get_notification_status(notification_id: str):
+    return {"status": "delivered"}
 
 
 @app.post("/tool/trigger_surveillance")
@@ -1008,12 +1196,6 @@ async def api_process_offline_queue():
     return await orchestrator.process_offline_queue()
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "service": "sihalink-orchestrator"}
-
-
-
 
 
 @app.get("/tool/follow_ups/{chw_id}")
@@ -1022,6 +1204,17 @@ async def api_get_chw_follow_ups(chw_id: str, overdue_only: bool = False):
     from ..data.agent import get_pending_follow_ups
 
     tasks = get_pending_follow_ups(chw_id=chw_id, overdue_only=overdue_only)
+    return {"follow_ups": tasks, "count": len(tasks)}
+
+
+@app.post("/tool/get_pending_follow_ups")
+async def api_get_pending_follow_ups(payload: Dict[str, Any] = {}):
+    """Get all pending follow-ups for a county (supervisor view)."""
+    from ..data.agent import get_pending_follow_ups
+    tasks = get_pending_follow_ups(
+        county=payload.get("county"),
+        overdue_only=payload.get("overdue_only", False)
+    )
     return {"follow_ups": tasks, "count": len(tasks)}
 
 
@@ -1091,6 +1284,13 @@ async def api_search_protocols(payload: Dict[str, Any]):
     from ..data.agent import search_protocols
 
     return search_protocols(query, payload.get("limit", 5))
+
+
+@app.post("/tool/list_protocols")
+async def api_list_protocols(payload: Dict[str, Any] = {}):
+    """List all active protocols, optionally filtered by county."""
+    from ..data.agent import list_protocols
+    return list_protocols(county=payload.get("county"))
 
 
 @app.post("/tool/upsert_protocol")
@@ -1342,6 +1542,17 @@ async def api_update_referral_status(payload: Dict[str, Any]):
     )
 
 
+@app.post("/tool/query_referrals")
+async def api_query_referrals(payload: Dict[str, Any] = {}):
+    """Query referrals."""
+    from ..data.agent import query_referrals
+    return query_referrals(
+        county=payload.get("county"),
+        status=payload.get("status"),
+        limit=payload.get("limit", 20)
+    )
+
+
 # ── Swarm control & status routes ─────────────────────────────────────────────
 
 @app.get("/swarm/status")
@@ -1432,3 +1643,314 @@ async def swarm_remove_county(county: str):
 
 # ── Import needed for swarm event publishing in routes above ──────────────────
 from agents.swarm import SwarmEvent  # noqa: E402 — after app definition to avoid circular
+
+
+# ── Agentic endpoints — ADK runner ────────────────────────────────────────────
+
+@app.post("/encounter/respond")
+async def api_encounter_respond(payload: Dict[str, Any]):
+    """
+    Route a Telegram or web message through the ADK Gemini orchestrator.
+
+    This is the truly agentic endpoint — Gemini reads the message, decides
+    which tools to call (intake, geo, data, surveillance, notify), chains them,
+    and returns a natural language response the bot sends back to the user.
+
+    Body:
+      chat_id  — Telegram chat ID (used as user_id for session persistence)
+      text     — The user's message text
+      session_id — Optional explicit session (defaults to tg-{chat_id})
+    """
+    chat_id    = str(payload.get("chat_id", "unknown"))
+    text       = payload.get("text", "").strip()
+    session_id = payload.get("session_id")
+
+    if not text:
+        return {"status": "ignored", "reason": "empty message"}
+
+    try:
+        response = await run_agentic_message(
+            user_id=chat_id,
+            message=text,
+            session_id=session_id,
+        )
+        return {
+            "status":     "resolved",
+            "session_id": session_id or f"tg-{chat_id}",
+            "response":   response,
+        }
+    except Exception as exc:
+        logger.error("Agentic message failed for %s: %s", chat_id, exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.post("/adk/run")
+async def api_adk_run(payload: Dict[str, Any]):
+    """
+    Direct ADK runner endpoint for arbitrary agentic tasks.
+    Accepts any natural language instruction and returns Gemini's response
+    after it autonomously calls the appropriate tools.
+
+    Body:
+      user_id    — Caller identity (used for session persistence)
+      message    — Natural language instruction
+      session_id — Optional session ID for conversation continuity
+    """
+    user_id    = payload.get("user_id", "api-user")
+    message    = payload.get("message", "").strip()
+    session_id = payload.get("session_id")
+
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    try:
+        response = await run_agentic_message(
+            user_id=str(user_id),
+            message=message,
+            session_id=session_id,
+        )
+        return {
+            "status":     "ok",
+            "session_id": session_id or f"session-{user_id}",
+            "response":   response,
+        }
+    except Exception as exc:
+        logger.error("ADK run failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/tool/research_protocol")
+async def api_research_protocol(payload: Dict[str, Any]):
+    """
+    Trigger the Protocol Research Agent to formulate an evidence-based protocol
+    by searching WHO, CDC, ECDC, and Kenya MoH guidelines in real time.
+
+    Body:
+      syndrome      — WHO IDSR syndrome category (required)
+      county        — Kenya county name (default: 'all')
+      alert_level   — RED | YELLOW | GREEN (default: YELLOW)
+      force_refresh — Re-research even if protocol exists (default: false)
+    """
+    syndrome      = payload.get("syndrome")
+    county        = payload.get("county", "all")
+    alert_level   = payload.get("alert_level", "YELLOW")
+    force_refresh = payload.get("force_refresh", False)
+
+    if not syndrome:
+        raise HTTPException(status_code=400, detail="syndrome is required")
+
+    try:
+        from agents.surveillance.protocol_agent import (
+            research_and_formulate_protocol_sync,
+        )
+        result = research_and_formulate_protocol_sync(
+            syndrome, county, alert_level, force_refresh
+        )
+        return result
+    except Exception as exc:
+        logger.error("Protocol research endpoint failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+# ── Contact Tracing endpoints ─────────────────────────────────────────────────
+
+@app.post("/tool/trace_contacts")
+async def api_trace_contacts(payload: Dict[str, Any]):
+    """
+    Initiate a contact trace for a single encounter or outbreak cluster.
+    Called automatically for RED encounters; also callable manually.
+
+    Body:
+      encounter_id  — index case to trace (required unless alert_id given)
+      alert_id      — trace the full outbreak cluster (optional)
+      initiated_by  — user ID or 'system' (optional)
+    """
+    encounter_id = payload.get("encounter_id")
+    alert_id     = payload.get("alert_id")
+    initiated_by = payload.get("initiated_by", "api")
+
+    if not encounter_id and not alert_id:
+        raise HTTPException(
+            status_code=400,
+            detail="encounter_id or alert_id is required",
+        )
+
+    from agents.contact_tracing.agent import (
+        initiate_contact_trace,
+        trace_outbreak_cluster,
+    )
+
+    if alert_id and not encounter_id:
+        result = trace_outbreak_cluster(alert_id)
+    else:
+        result = initiate_contact_trace(
+            encounter_id, alert_id=alert_id, initiated_by=initiated_by
+        )
+
+    # Publish event so Notify Agent can dispatch CHW tasks
+    if result.get("trace_id") and result.get("contacts_identified", 0) > 0:
+        await swarm.bus.publish(SwarmEvent(
+            "contact_trace.contacts_identified",
+            result,
+            source="orchestrator",
+        ))
+
+    return result
+
+
+@app.get("/tool/trace_status/{trace_id}")
+async def api_trace_status(trace_id: str):
+    """
+    Get the full status of a contact trace including analytics histogram.
+
+    Returns trace document with:
+      - All contacts and their current status
+      - completion_rate_pct, secondary_attack_rate
+      - status_histogram: identified / contacted / cleared / confirmed / overdue
+      - tier_histogram: HOUSEHOLD / COMMUNITY / FACILITY / UNKNOWN counts
+    """
+    from agents.contact_tracing.agent import get_trace_status
+    result = get_trace_status(trace_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.post("/tool/update_contact_status")
+async def api_update_contact_status(payload: Dict[str, Any]):
+    """
+    Update the status of a single contact within a trace.
+    Called when a CHW completes a contact visit.
+
+    Body:
+      trace_id          — CT-XXXXXXXX (required)
+      contact_id        — CON-XXXXXXXX (required)
+      status            — contacted | assessed | cleared | confirmed (required)
+      new_encounter_id  — if contact became a confirmed case (optional)
+      notes             — CHW assessment notes (optional)
+      chw_id            — CHW completing the visit (optional)
+    """
+    trace_id   = payload.get("trace_id")
+    contact_id = payload.get("contact_id")
+    status     = payload.get("status")
+
+    if not trace_id or not contact_id or not status:
+        raise HTTPException(
+            status_code=400,
+            detail="trace_id, contact_id, and status are required",
+        )
+
+    valid_statuses = {"contacted", "assessed", "cleared", "confirmed"}
+    if status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of: {valid_statuses}",
+        )
+
+    from agents.contact_tracing.agent import update_contact_status
+    result = update_contact_status(
+        trace_id         = trace_id,
+        contact_id       = contact_id,
+        status           = status,
+        new_encounter_id = payload.get("new_encounter_id"),
+        notes            = payload.get("notes", ""),
+        chw_id           = payload.get("chw_id", "unknown"),
+    )
+
+    # If a new confirmed case was found, publish event for secondary trace
+    if result.get("escalation_triggered") and payload.get("new_encounter_id"):
+        await swarm.bus.publish(SwarmEvent(
+            "contact_trace.contact_confirmed",
+            {
+                "trace_id":          trace_id,
+                "contact_id":        contact_id,
+                "new_encounter_id":  payload["new_encounter_id"],
+            },
+            source="orchestrator",
+        ))
+
+    return result
+
+
+@app.get("/tool/active_traces")
+async def api_active_traces(
+    county:   Optional[str] = None,
+    syndrome: Optional[str] = None,
+    limit:    int = 20,
+):
+    """
+    List all active contact traces with summary statistics.
+    Optionally filter by county and/or syndrome.
+    """
+    from agents.contact_tracing.agent import get_active_traces
+    return get_active_traces(county=county, syndrome=syndrome, limit=limit)
+
+
+@app.post("/tool/resolve_trace")
+async def api_resolve_trace(payload: Dict[str, Any]):
+    """
+    Mark a contact trace as resolved.
+    Called when all contacts are cleared or confirmed.
+
+    Body:
+      trace_id          — CT-XXXXXXXX (required)
+      resolved_by       — user ID (optional, default 'system')
+      resolution_notes  — summary notes (optional)
+    """
+    trace_id = payload.get("trace_id")
+    if not trace_id:
+        raise HTTPException(status_code=400, detail="trace_id is required")
+
+    from agents.contact_tracing.agent import resolve_trace
+    result = resolve_trace(
+        trace_id         = trace_id,
+        resolved_by      = payload.get("resolved_by", "system"),
+        resolution_notes = payload.get("resolution_notes", ""),
+    )
+
+    await swarm.bus.publish(SwarmEvent(
+        "contact_trace.resolved",
+        result,
+        source="orchestrator",
+    ))
+    return result
+
+
+@app.get("/health/contact_tracing")
+async def health_contact_tracing():
+    """Health check for the Contact Tracing Agent."""
+    mongodb_ok = data_agent.connected
+    return {
+        "mongodb_connected": mongodb_ok,
+        "capabilities": [
+            "initiate_contact_trace",
+            "trace_outbreak_cluster",
+            "update_contact_status",
+            "scan_overdue_contacts",
+            "get_trace_status",
+            "resolve_trace",
+        ],
+    }
+
+# ---------------------------------------------------------------------------
+# Agent Observability (Logs)
+# ---------------------------------------------------------------------------
+
+@app.get("/swarm/agent_logs")
+async def api_get_agent_logs(session_id: Optional[str] = None, limit: int = 50):
+    """Fetch recent vectorized agent decision-making logs."""
+    from agents.data.agent import query_agent_logs
+    try:
+        result = query_agent_logs(session_id, limit)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.get("/swarm/agent_logs/search")
+async def api_search_agent_logs(query: str, limit: int = 10):
+    """Semantic Vector Search over agent decision logs."""
+    from agents.data.agent import search_agent_logs
+    try:
+        result = search_agent_logs(query, limit)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

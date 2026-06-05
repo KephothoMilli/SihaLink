@@ -5,9 +5,8 @@ Generates semantic embeddings for clinical encounters, protocols, and search que
 Provider priority:
   1. Voyage AI  voyage-4  (1024 dims) — MongoDB's recommended partner.
      Best multilingual + medical retrieval quality. Required for production.
-  2. Google text-embedding-004  (768 dims) — via google-genai SDK (fallback)
-  3. Google text-embedding-004  (768 dims) — via legacy google-generativeai
-  4. Zero vector — never crashes the pipeline
+  2. Google gemini-embedding-001 (3072 dims) — via google-genai SDK (fallback)
+  3. Zero vector — never crashes the pipeline
 
 Two embedding types follow the Voyage AI best-practice distinction:
   document — used when inserting data (encounters, protocols)
@@ -26,8 +25,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("SihaLink-Embedding")
 
 # ── Dimension constants ───────────────────────────────────────────────────────
-VOYAGE_DIM = 1024   # voyage-4
-GOOGLE_DIM = 768    # text-embedding-004
+VOYAGE_DIM  = 1024  # voyage-4
+GOOGLE_DIM  = 3072  # gemini-embedding-001 (text-embedding-004 not available on v1)
 
 _active_dim: int = GOOGLE_DIM   # updated at init
 
@@ -86,29 +85,17 @@ class EmbeddingService:
             except ImportError:
                 logger.warning("voyageai not installed — pip install voyageai")
 
-        # 2. Try google-genai SDK
+        # 2. Try google-genai SDK (gemini-embedding-001, 3072 dims)
         if self._voyage_client is None and gemini_key:
             try:
                 from google import genai as _genai
                 self._genai_client = _genai.Client(api_key=gemini_key)
                 _active_dim = GOOGLE_DIM
-                logger.info("✅ Embedding: Google text-embedding-004 (%d dims)", GOOGLE_DIM)
+                logger.info("✅ Embedding: Google gemini-embedding-001 (%d dims)", GOOGLE_DIM)
             except ImportError:
-                logger.warning("google-genai not installed, trying legacy SDK")
+                logger.error("google-genai not installed — zero vectors will be used")
 
-        # 3. Try legacy google-generativeai
-        if self._voyage_client is None and self._genai_client is None and gemini_key:
-            try:
-                import google.generativeai as _legacy
-                _legacy.configure(api_key=gemini_key)
-                self._genai_legacy = _legacy
-                _active_dim = GOOGLE_DIM
-                logger.info("✅ Embedding: google-generativeai legacy (%d dims)", GOOGLE_DIM)
-            except ImportError:
-                logger.error("No embedding SDK available — zero vectors will be used")
-
-        if self._voyage_client is None and self._genai_client is None \
-                and self._genai_legacy is None:
+        if self._voyage_client is None and self._genai_client is None:
             logger.warning("⚠️  No embedding provider — set VOYAGE_API_KEY or GEMINI_API_KEY")
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -121,8 +108,8 @@ class EmbeddingService:
     def provider(self) -> str:
         if self._voyage_client:
             return "voyage-4"
-        if self._genai_client or self._genai_legacy:
-            return "text-embedding-004"
+        if self._genai_client:
+            return "gemini-embedding-001"
         return "none"
 
     def generate_encounter_embedding(self, encounter_doc: Dict[str, Any]) -> List[float]:
@@ -212,7 +199,7 @@ class EmbeddingService:
             except Exception as exc:
                 logger.warning("Voyage AI embed failed: %s", exc)
 
-        # 2. Google genai SDK
+        # 2. Google genai SDK (gemini-embedding-001 — 3072 dims)
         if self._genai_client:
             try:
                 from google.genai import types as gt
@@ -221,34 +208,19 @@ class EmbeddingService:
                     else "RETRIEVAL_QUERY"
                 )
                 resp = self._genai_client.models.embed_content(
-                    model="models/text-embedding-004",
+                    model="gemini-embedding-001",
                     contents=text,
                     config=gt.EmbedContentConfig(
                         task_type=task,
-                        output_dimensionality=GOOGLE_DIM,
                     ),
                 )
                 embs = resp.embeddings
                 if embs and hasattr(embs[0], "values"):
-                    return list(embs[0].values)
+                    vec = list(embs[0].values)
+                    if len(vec) > 0:
+                        return vec
             except Exception as exc:
                 logger.warning("google-genai embed failed: %s", exc)
-
-        # 3. Legacy google-generativeai
-        if self._genai_legacy:
-            try:
-                task = (
-                    "retrieval_document" if input_type == "document"
-                    else "retrieval_query"
-                )
-                result = self._genai_legacy.embed_content(
-                    model="models/text-embedding-004",
-                    content=text,
-                    task_type=task,
-                )
-                return result["embedding"]
-            except Exception as exc:
-                logger.error("Legacy Google embed failed: %s", exc)
 
         logger.warning("All embedding providers failed — zero vector (%d dims)", _active_dim)
         return [0.0] * _active_dim

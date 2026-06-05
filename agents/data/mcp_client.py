@@ -156,6 +156,12 @@ class DataAgent:
                 [("county", ASCENDING), ("syndrome", ASCENDING)], unique=True
             )
 
+            # ── agent_logs ────────────────────────────────────────────────────
+            self.db.agent_logs.create_index(
+                [("session_id", ASCENDING), ("timestamp", ASCENDING)]
+            )
+            self.db.agent_logs.create_index([("agent_name", ASCENDING)])
+
             logger.info("✅ MongoDB indexes verified across all collections")
         except OperationFailure as exc:
             logger.warning("Index creation warning: %s", exc)
@@ -164,29 +170,43 @@ class DataAgent:
         """
         Creates the Atlas Vector Search index on encounters.embedding.
         Requires MongoDB Atlas M10+ cluster. Idempotent — safe to call repeatedly.
+        Uses 3072 dims to match gemini-embedding-001 (or 1024 for Voyage AI).
         """
+        from .embedding_service import get_embedding_dim
+        dims = get_embedding_dim()
         index_def = {
             "mappings": {
                 "dynamic": False,
                 "fields": {
                     "embedding": {
                         "type": "knnVector",
-                        "dimensions": 768,
+                        "dimensions": dims,
                         "similarity": "cosine",
                     }
                 },
             }
         }
+        logger.info("Creating Atlas Vector Search indexes (dims=%d) ...", dims)
         try:
             self.db.command(
                 "createSearchIndexes",
                 "encounters",
                 indexes=[{"name": "vector_index", "definition": index_def}],
             )
-            logger.info("✅ Atlas Vector Search index created")
-            return {"created": True, "index": "vector_index"}
+            logger.info("✅ Atlas Vector Search index created on encounters")
         except OperationFailure as exc:
-            logger.info("Vector search index note (may already exist): %s", exc)
+            logger.info("Vector search index note (encounters may already exist): %s", exc)
+            
+        try:
+            self.db.command(
+                "createSearchIndexes",
+                "agent_logs",
+                indexes=[{"name": "vector_index", "definition": index_def}],
+            )
+            logger.info("✅ Atlas Vector Search index created on agent_logs")
+            return {"created": True, "index": "vector_index", "dimensions": dims}
+        except OperationFailure as exc:
+            logger.info("Vector search index note (agent_logs may already exist): %s", exc)
             return {"created": False, "note": str(exc)}
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -270,11 +290,33 @@ class DataAgent:
         return list(new_keys)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # DEGRADED-MODE GUARD
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _check_db(self) -> bool:
+        """Return True if DB is available; log a warning and return False if not.
+
+        All synchronous methods that access self.db should call this first and
+        return an empty/default result immediately when it returns False.
+        This prevents AttributeError: 'NoneType' has no attribute '...' when
+        MongoDB is unreachable (e.g., IP not on Atlas allowlist).
+        """
+        if not self.connected or self.db is None:
+            logger.warning(
+                "⚠️  MongoDB not connected — operation skipped (degraded mode). "
+                "Add your IP to Atlas Network Access to restore connectivity."
+            )
+            return False
+        return True
+
+    # ══════════════════════════════════════════════════════════════════════════
     # ALERTS  (outbreak signals — separate from referrals)
     # ══════════════════════════════════════════════════════════════════════════
 
     def query_active_alerts(self, county: Optional[str] = None) -> List[Dict[str, Any]]:
         """Synchronous query for active alerts. Used by Telegram bot commands."""
+        if not self._check_db():
+            return []
         query: Dict[str, Any] = {"status": "active"}
         if county:
             query["location.county"] = county
@@ -412,6 +454,8 @@ class DataAgent:
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         """Query referrals with optional county and status filters."""
+        if not self._check_db():
+            return []
         query: Dict[str, Any] = {}
         if county:
             query["location.county"] = county
@@ -506,15 +550,9 @@ class DataAgent:
         """
         Retrieve pending follow-up tasks for a CHW or county.
         Used by the Telegram /followup command and the dashboard.
-
-        Args:
-            chw_id:       Filter by specific CHW.
-            county:       Filter by county.
-            overdue_only: If True, return only tasks past their due_date.
-
-        Returns:
-            List of follow-up task dicts, sorted by due_date ascending.
         """
+        if not self._check_db():
+            return []
         query: Dict[str, Any] = {"status": "pending"}
         if chw_id:
             query["chw_id"] = chw_id
@@ -1425,3 +1463,81 @@ class DataAgent:
             return vec_results
         # Fall back to Atlas Search full-text
         return self.search_protocols_fulltext(query, limit=limit)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # AGENT LOGS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def insert_agent_log(
+        self, agent_name: str, step: str, detail: str, level: str, session_id: str
+    ) -> str:
+        """Insert a vectorized agent decision log."""
+        doc = {
+            "agent_name": agent_name,
+            "step": step,
+            "detail": detail,
+            "level": level,
+            "session_id": session_id,
+            "timestamp": datetime.utcnow(),
+        }
+        try:
+            doc["embedding"] = self.embedding_svc.generate_text_embedding(
+                f"{agent_name} [{step}]: {detail}"
+            )
+        except Exception as exc:
+            logger.warning("Agent log embedding failed: %s", exc)
+
+        loop = asyncio.get_running_loop()
+        inserted_id = await loop.run_in_executor(
+            None, lambda: self.db.agent_logs.insert_one(doc).inserted_id
+        )
+        return str(inserted_id)
+
+    def query_agent_logs(self, session_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Fetch recent agent logs, optionally filtered by session."""
+        query = {}
+        if session_id:
+            query["session_id"] = session_id
+
+        cursor = self.db.agent_logs.find(query, {"embedding": 0}).sort("timestamp", DESCENDING).limit(limit)
+        results = []
+        for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc:
+                doc["timestamp"] = doc["timestamp"].isoformat()
+            results.append(doc)
+        
+        # Return in ascending order for UI display
+        return list(reversed(results))
+
+    def search_agent_logs(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Semantic search over agent logs using Atlas Vector Search."""
+        try:
+            query_vector = self.embedding_svc.generate_query_embedding(query)
+        except Exception as exc:
+            logger.error("Failed to generate query embedding: %s", exc)
+            return []
+
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "vector_index",
+                    "path": "embedding",
+                    "queryVector": query_vector,
+                    "numCandidates": limit * 10,
+                    "limit": limit,
+                }
+            },
+            {"$project": {"embedding": 0, "score": {"$meta": "vectorSearchScore"}}},
+        ]
+
+        try:
+            results = list(self.db.agent_logs.aggregate(pipeline))
+            for doc in results:
+                doc["_id"] = str(doc["_id"])
+                if "timestamp" in doc:
+                    doc["timestamp"] = doc["timestamp"].isoformat()
+            return results
+        except OperationFailure as exc:
+            logger.error("Vector search failed on agent_logs: %s", exc)
+            return []

@@ -34,6 +34,7 @@ import {
   FormIntakeRequest,
   TelegramIntakeRequest,
 } from '../../../services/agents/intake-agent.service';
+import { ApiService } from '../../../services/api.service';
 
 const KENYA_COUNTIES = [
   'Baringo',
@@ -155,6 +156,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     syndrome_hint: '',
     language_hint: '',
     county: '',
+    patient_contacts: '',
     symptoms: [] as string[],
   };
   symptomInput = '';
@@ -166,21 +168,44 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     language_hint: '',
   };
 
+  // ── agent logs ────────────────────────────────────────────────────────────
+  agentLogs: any[] = [];
+  private logPollInterval: any;
+
   private destroy$ = new Subject<void>();
 
   constructor(
     private intakeAgent: IntakeAgentService,
+    private api: ApiService,
     private snackBar: MatSnackBar,
   ) {}
 
   ngOnInit() {
     this.setupAudioRecording();
+    this.startLogPolling();
   }
 
   ngOnDestroy() {
     this.stopRecording();
+    if (this.logPollInterval) clearInterval(this.logPollInterval);
     this.destroy$.next();
     this.destroy$.complete();
+  }
+
+  private startLogPolling() {
+    this.fetchLogs();
+    this.logPollInterval = setInterval(() => this.fetchLogs(), 3000);
+  }
+
+  private async fetchLogs() {
+    try {
+      const res = await this.api.getAgentLogs(undefined, 5);
+      if (res && res.logs) {
+        this.agentLogs = res.logs;
+      }
+    } catch (e) {
+      // Ignore polling errors
+    }
   }
 
   // ── Audio ─────────────────────────────────────────────────────────────────
@@ -303,6 +328,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
         syndrome_hint: this.formData.syndrome_hint || undefined,
         language_hint: this.formData.language_hint || undefined,
         county: this.formData.county || undefined,
+        patient_contacts: this.formData.patient_contacts || undefined,
       };
       this.extractionResult = await this.intakeAgent.submitForm(req);
     } catch (err) {
@@ -377,6 +403,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
       syndrome_hint: '',
       language_hint: '',
       county: '',
+      patient_contacts: '',
       symptoms: [],
     };
     this.telegramData = { chw_id: '', message_text: '', language_hint: '' };

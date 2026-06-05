@@ -21,6 +21,29 @@
   <mat-progress-bar mode="indeterminate" color="primary" class="global-progress" />
   }
 
+  <!-- Agent Logs (Behind the Scenes) ─────────────────────────────────── -->
+  @if (agentLogs.length > 0) {
+  <mat-card appearance="outlined" class="agent-logs-card">
+    <mat-card-header>
+      <span class="material-symbols-outlined card-icon" mat-card-avatar>memory</span>
+      <mat-card-title>Behind the Scenes: Agent Activity</mat-card-title>
+      <mat-card-subtitle>Live decision-making logs from the swarm (stored in MongoDB Vector Search)</mat-card-subtitle>
+    </mat-card-header>
+    <mat-card-content class="agent-logs-content">
+      <ul class="log-list">
+        @for (log of agentLogs; track log._id) {
+        <li class="log-item" [class]="'log-level-' + log.level.toLowerCase()">
+          <span class="log-time">{{ log.timestamp | date:'HH:mm:ss' }}</span>
+          <span class="log-agent">[{{ log.agent_name }}]</span>
+          <span class="log-step"><strong>{{ log.step }}</strong>:</span>
+          <span class="log-detail">{{ log.detail }}</span>
+        </li>
+        }
+      </ul>
+    </mat-card-content>
+  </mat-card>
+  }
+
   <!-- ── RESULTS PANEL ─────────────────────────────────────────────── -->
   @if (extractionResult) {
   <div class="results-section">
@@ -345,6 +368,16 @@
                 </textarea>
               <mat-icon matSuffix>edit_note</mat-icon>
               <mat-hint>Supports Dholuo, Swahili, Kikuyu, Somali, Luhya, and English</mat-hint>
+            </mat-form-field>
+
+            <!-- Patient Contacts - full width -->
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>Patient Contacts</mat-label>
+              <textarea matInput rows="2" [(ngModel)]="formData.patient_contacts"
+                placeholder="List household or community contacts (e.g. John Doe - Brother, Jane - Sister)">
+                </textarea>
+              <mat-icon matSuffix>group</mat-icon>
+              <mat-hint>Helps the Contact Tracing Agent build exposure networks</mat-hint>
             </mat-form-field>
 
             <!-- Symptoms chip input — full width -->

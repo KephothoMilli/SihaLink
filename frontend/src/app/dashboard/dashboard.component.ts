@@ -53,6 +53,12 @@ export class DashboardComponent implements OnInit {
       route: '/agents/surveillance',
       icon: '📊',
     },
+    {
+      name: 'Contact Tracing Agent',
+      description: 'Trace & track exposed contacts',
+      route: '/agents/contact-tracing',
+      icon: '🔗',
+    },
   ];
 
   constructor(private rootAgent: RootAgentService) {}
@@ -71,10 +77,14 @@ export class DashboardComponent implements OnInit {
     switch (state) {
       case 'COMPLETE':
         return 'var(--color-green)';
-      case 'ERROR':
+      case 'FAILED':
         return 'var(--color-red)';
       case 'DECISION_GATE':
         return 'var(--color-yellow)';
+      case 'CLARIFICATION_GATE':
+        return '#f59e0b';
+      case 'OFFLINE_QUEUED':
+        return '#6366f1';
       default:
         return 'var(--color-secondary)';
     }
@@ -82,15 +92,54 @@ export class DashboardComponent implements OnInit {
 
   getStateProgress(state: string): number {
     switch (state) {
-      case 'IDLE': return 10;
-      case 'LISTENING': return 25;
-      case 'EXTRACTING': return 40;
-      case 'GEOCODING': return 55;
-      case 'STORING': return 70;
-      case 'DECISION_GATE': return 80;
-      case 'NOTIFYING': return 90;
-      case 'COMPLETE': return 100;
-      default: return 0;
+      case 'IDLE':
+        return 5;
+      case 'LISTENING':
+        return 15;
+      case 'EXTRACTING':
+        return 30;
+      case 'CLARIFICATION_GATE':
+        return 35;
+      case 'GEOCODING':
+        return 50;
+      case 'STORING':
+        return 65;
+      case 'FOLLOW_UP_SCHEDULED':
+        return 70;
+      case 'ALERTING':
+        return 75;
+      case 'DECISION_GATE':
+        return 80;
+      case 'NOTIFYING':
+        return 92;
+      case 'COMPLETE':
+        return 100;
+      case 'FAILED':
+        return 100;
+      case 'OFFLINE_QUEUED':
+        return 10;
+      default:
+        return 0;
     }
+  }
+
+  getStateLabel(state: string): string {
+    const labels: Record<string, string> = {
+      IDLE: 'Idle',
+      LISTENING: 'Received',
+      EXTRACTING: 'Extracting',
+      CLARIFICATION_GATE: 'Needs Info',
+      GEOCODING: 'Geo-locating',
+      STORING: 'Storing',
+      FOLLOW_UP_SCHEDULED: 'Follow-ups set',
+      ALERTING: 'Alerting',
+      DECISION_GATE: 'Awaiting Approval',
+      NOTIFYING: 'Notifying',
+      COMPLETE: 'Complete',
+      FAILED: 'Failed',
+      OFFLINE_QUEUED: 'Queued Offline',
+      SYNCING: 'Syncing',
+    };
+    return labels[state] ?? state;
   }
 }

@@ -97,6 +97,23 @@ class GeoAgent:
         for i, element in enumerate(matrix['rows'][0]['elements']):
             if element['status'] == 'OK':
                 facilities[i]["distance_km"] = round(element['distance']['value'] / 1000, 1)
-                facilities[i]["eta_minutes"] = int(element['duration_in_traffic']['value'] / 60)
+                facilities[i]["eta_minutes"] = int(element.get('duration_in_traffic', element.get('duration', {'value': 0}))['value'] / 60)
         
         return facilities
+
+    def get_eta(self, from_lat: float, from_lng: float, to_lat: float, to_lng: float) -> Dict:
+        """Calculates direct driving ETA between two points"""
+        matrix = self.gmaps.distance_matrix(
+            origins=[(from_lat, from_lng)],
+            destinations=[(to_lat, to_lng)],
+            mode="driving",
+            departure_time=datetime.now()
+        )
+        element = matrix['rows'][0]['elements'][0]
+        if element['status'] == 'OK':
+            duration_val = element.get('duration_in_traffic', element.get('duration', {'value': 0}))['value']
+            return {
+                "distance_km": round(element['distance']['value'] / 1000, 1),
+                "eta_minutes": int(duration_val / 60)
+            }
+        return {"distance_km": 0, "eta_minutes": 0}

@@ -1,210 +1,517 @@
-<!-- Surveillance Agent UI Template -->
+<!-- Surveillance Agent UI — Material 3 + modern HTML features -->
 
-<div class="surveillance-agent-container">
-  <div class="agent-title-section">
-    <span class="agent-badge">Surveillance Agent</span>
-    <h2>Epidemiological Surveillance Dashboard</h2>
-    <p class="description">
-      Monitor public health indicators, analyse disease syndrome baselines, and detect
-      outbreak clusters across Kenya counties.
+<div class="surveillance-container">
+
+  <!-- Page header -->
+  <div class="page-header">
+    <span class="material-symbols-outlined header-icon">monitoring</span>
+    <div>
+      <h1 class="mat-headline-medium">Epidemiological Surveillance Dashboard</h1>
+      <p class="mat-body-medium subtitle">
+        Monitor public health indicators, detect outbreak clusters and cross-county spread
+        across Kenya counties in real time.
+      </p>
+    </div>
+  </div>
+
+  <!-- Toast error -->
+  @if (error) {
+  <div class="toast toast-error" role="alert">
+    <span class="material-symbols-outlined toast-icon">error</span>
+    <span>{{ error }}</span>
+    <button class="toast-close" (click)="error = null">✕</button>
+  </div>
+  }
+
+  <!-- Loading bar -->
+  @if (isLoading) {
+  <div class="loading-bar">
+    <div class="loading-bar-fill"></div>
+  </div>
+  }
+
+  <!-- ── Query controls card ─────────────────────────────────────── -->
+  <div class="controls-card">
+    <div class="controls-row">
+      <div class="field-group">
+        <label class="field-label">
+          <span class="material-symbols-outlined field-icon">location_on</span>
+          County / Region
+        </label>
+        <input type="text" [(ngModel)]="selectedRegion" placeholder="e.g., Kisumu" class="field-input" />
+      </div>
+      <div class="field-group field-narrow">
+        <label class="field-label">
+          <span class="material-symbols-outlined field-icon">calendar_month</span>
+          Trend Window (days)
+        </label>
+        <input type="number" [(ngModel)]="trendDays" min="1" max="365" class="field-input" />
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" (click)="getRegionAlerts()" [disabled]="isLoading">
+          <span class="material-symbols-outlined">warning</span>
+          Get Outbreak Signals
+        </button>
+        <button class="btn btn-outline" (click)="loadDashboard()" [disabled]="isLoading">
+          <span class="material-symbols-outlined">refresh</span>
+          Refresh Dashboard
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab bar ─────────────────────────────────────────────────── -->
+  <div class="tab-bar" role="tablist">
+    <button role="tab" [class.active]="activeTab === 'dashboard'" (click)="activeTab = 'dashboard'" class="tab-btn">
+      <span class="material-symbols-outlined">bar_chart</span>
+      Status Summary
+    </button>
+    <button role="tab" [class.active]="activeTab === 'alerts'" (click)="activeTab = 'alerts'" class="tab-btn">
+      <span class="material-symbols-outlined">emergency</span>
+      Outbreak Alerts
+      @if (regionAlerts.length > 0) {
+      <span class="tab-badge">{{ regionAlerts.length }}</span>
+      }
+    </button>
+    <button role="tab" [class.active]="activeTab === 'trends'" (click)="activeTab = 'trends'" class="tab-btn">
+      <span class="material-symbols-outlined">assignment_late</span>
+      CHW Outreach Gaps
+    </button>
+    <button role="tab" [class.active]="activeTab === 'clusters'" (click)="activeTab = 'clusters'" class="tab-btn">
+      <span class="material-symbols-outlined">hub</span>
+      Cross-County Spread
+    </button>
+  </div>
+
+  <!-- ══════════════ STATUS SUMMARY TAB ══════════════════════════ -->
+  @if (activeTab === 'dashboard') {
+  @if (!dashboardData && !isLoading) {
+  <div class="empty-state">
+    <span class="material-symbols-outlined empty-icon">monitoring</span>
+    <p>Click <strong>Refresh Dashboard</strong> to load national stats.</p>
+  </div>
+  }
+
+  @if (dashboardData) {
+  <!-- Status pill -->
+  <div class="section-header">
+    <h2 class="section-title">National Syndromic Indicators</h2>
+    <span class="status-pill status-ok" [class.status-ok]="dashboardData.status === 'ok'"
+      [class.status-degraded]="dashboardData.status !== 'ok'">
+      <span class="material-symbols-outlined">
+        {{ dashboardData.status === 'ok' ? 'check_circle' : 'warning' }}
+      </span>
+      {{ dashboardData.status ?? 'live' }}
+    </span>
+    @if (dashboardData.generated_at) {
+    <span class="generated-at mat-label-small">
+      Updated {{ dashboardData.generated_at | date:'dd MMM HH:mm' }}
+    </span>
+    }
+  </div>
+
+  <!-- Encounter summary cards -->
+  @if (dashboardData.encounters) {
+  <div class="metric-grid">
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#0288d1">today</span>
+      <p class="metric-label">Today</p>
+      <p class="metric-value">{{ dashboardData.encounters.today ?? 0 }}</p>
+      <p class="metric-sub">encounters</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#7b1fa2">date_range</span>
+      <p class="metric-label">This Week</p>
+      <p class="metric-value">{{ dashboardData.encounters.this_week ?? 0 }}</p>
+      <p class="metric-sub">encounters</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#388e3c">calendar_month</span>
+      <p class="metric-label">This Month</p>
+      <p class="metric-value">{{ dashboardData.encounters.this_month ?? 0 }}</p>
+      <p class="metric-sub">encounters</p>
+    </div>
+    @if (dashboardData.active_alerts !== undefined) {
+    <div class="metric-card alert-metric">
+      <span class="material-symbols-outlined metric-icon" style="color:#d32f2f">emergency</span>
+      <p class="metric-label">Active Alerts</p>
+      <p class="metric-value">{{ dashboardData.active_alerts ?? 0 }}</p>
+      <p class="metric-sub">nationwide</p>
+    </div>
+    }
+  </div>
+  }
+
+  <!-- Flat metric cards for alternate backend shape -->
+  @if (!dashboardData.encounters && dashboardData.active_alerts !== undefined) {
+  <div class="metric-grid">
+    <div class="metric-card alert-metric">
+      <span class="material-symbols-outlined metric-icon" style="color:#d32f2f">emergency</span>
+      <p class="metric-label">Active Alerts</p>
+      <p class="metric-value">{{ dashboardData.active_alerts }}</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#0288d1">today</span>
+      <p class="metric-label">Encounters Today</p>
+      <p class="metric-value">{{ dashboardData.encounters_today ?? 0 }}</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#7b1fa2">map</span>
+      <p class="metric-label">Counties Monitored</p>
+      <p class="metric-value">{{ dashboardData.counties_monitored ?? 0 }}</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#388e3c">description</span>
+      <p class="metric-label">Protocols</p>
+      <p class="metric-value">{{ dashboardData.protocols_formulated ?? 0 }}</p>
+    </div>
+  </div>
+  }
+
+  <!-- Syndrome breakdown bar chart -->
+  @if (dashboardData.syndrome_breakdown?.length) {
+  <div class="breakdown-card">
+    <h3 class="breakdown-title">
+      <span class="material-symbols-outlined">analytics</span>
+      Syndrome Breakdown
+    </h3>
+    <div class="breakdown-list">
+      @for (item of dashboardData.syndrome_breakdown; track item.syndrome) {
+      <div class="breakdown-row">
+        <span class="breakdown-label">
+          {{ item.syndrome | titlecase }}
+        </span>
+        <div class="breakdown-bar-track">
+          <div class="breakdown-bar-fill"
+            [style.width.%]="getBreakdownPct(item.count, dashboardData.syndrome_breakdown)"
+            [style.background]="getSyndromeColor(item.syndrome)">
+          </div>
+        </div>
+        <span class="breakdown-count badge" [style.background]="getSyndromeColor(item.syndrome) + '22'"
+          [style.color]="getSyndromeColor(item.syndrome)">
+          {{ item.count }}
+        </span>
+      </div>
+      }
+    </div>
+  </div>
+  }
+
+  <!-- County breakdown table -->
+  @if (dashboardData.county_breakdown?.length) {
+  <div class="breakdown-card">
+    <h3 class="breakdown-title">
+      <span class="material-symbols-outlined">map</span>
+      County Activity
+    </h3>
+    <div class="county-table">
+      <div class="ct-header">
+        <span>County</span><span>Encounters</span><span>Alerts</span><span>Status</span>
+      </div>
+      @for (row of dashboardData.county_breakdown; track row.county) {
+      <div class="ct-row">
+        <span class="ct-county">{{ row.county }}</span>
+        <span>{{ row.encounters ?? 0 }}</span>
+        <span>
+          @if ((row.alerts ?? 0) > 0) {
+          <span class="badge badge-red">{{ row.alerts }}</span>
+          } @else {
+          <span class="badge badge-green">0</span>
+          }
+        </span>
+        <span>
+          <span class="status-dot" [class.dot-green]="(row.alerts ?? 0) === 0" [class.dot-red]="(row.alerts ?? 0) > 0">
+          </span>
+        </span>
+      </div>
+      }
+    </div>
+  </div>
+  }
+  }
+  }
+
+  <!-- ══════════════ OUTBREAK ALERTS TAB ═════════════════════════ -->
+  @if (activeTab === 'alerts') {
+  <div class="section-header">
+    <h2 class="section-title">Active Region Alerts</h2>
+    <p class="section-hint">Signals exceeding rolling statistical baselines.</p>
+  </div>
+
+  @if (regionAlerts.length === 0) {
+  <div class="empty-state">
+    <span class="material-symbols-outlined empty-icon" style="color:#388e3c">check_circle</span>
+    <p>No active outbreak alerts for the selected region.</p>
+  </div>
+  }
+
+  <div class="alerts-list">
+    @for (alert of regionAlerts; track alert.alert_id) {
+    <div class="alert-card" [style.--alert-color]="getRiskColor(alert.risk_level || '')">
+      <!-- Alert card header -->
+      <div class="alert-card-header">
+        <span class="material-symbols-outlined alert-icon">
+          {{ getAlertIcon(alert.syndrome) }}
+        </span>
+        <div class="alert-card-titles">
+          <h3 class="alert-syndrome">{{ alert.syndrome | titlecase }}</h3>
+          <span class="alert-type-text mat-label-small">
+            {{ alert.alert_type | titlecase }}
+          </span>
+        </div>
+        <div class="alert-badges">
+          <span class="badge" [style.background]="getRiskColor(alert.risk_level || '') + '20'"
+            [style.color]="getRiskColor(alert.risk_level || '')">
+            {{ alert.risk_level || 'ACTIVE' }}
+          </span>
+          @if (alert.escalation_level) {
+          <span class="badge badge-purple">{{ alert.escalation_level }}</span>
+          }
+        </div>
+      </div>
+
+      <!-- Detail pills row -->
+      <div class="detail-pills">
+        @if (alert.location) {
+        <span class="detail-pill">
+          <span class="material-symbols-outlined">location_on</span>
+          {{ alert.location.ward }}, {{ alert.location.county }}
+        </span>
+        }
+        @if (alert.count) {
+        <span class="detail-pill detail-pill-red">
+          <span class="material-symbols-outlined">coronavirus</span>
+          {{ alert.count }} cases
+        </span>
+        }
+        @if (alert.percent_above_baseline) {
+        <span class="detail-pill detail-pill-orange">
+          <span class="material-symbols-outlined">trending_up</span>
+          +{{ alert.percent_above_baseline }}% above baseline
+        </span>
+        }
+        @if (alert.detected_at) {
+        <span class="detail-pill">
+          <span class="material-symbols-outlined">schedule</span>
+          {{ alert.detected_at | date:'dd MMM HH:mm' }}
+        </span>
+        }
+      </div>
+
+      <!-- Recommended actions -->
+      @if (alert.recommended_actions?.length) {
+      <details class="actions-details">
+        <summary class="actions-summary">
+          <span class="material-symbols-outlined">medical_services</span>
+          MoH Recommended Response ({{ alert.recommended_actions!.length }})
+        </summary>
+        <ul class="actions-list">
+          @for (action of alert.recommended_actions!; track action) {
+          <li>
+            <span class="material-symbols-outlined action-check">check_circle</span>
+            {{ action }}
+          </li>
+          }
+        </ul>
+      </details>
+      }
+    </div>
+    }
+  </div>
+  }
+
+  <!-- ══════════════ CHW OUTREACH GAPS TAB ═══════════════════════ -->
+  @if (activeTab === 'trends') {
+  <div class="section-header">
+    <h2 class="section-title">CHW Outreach Gap Analysis</h2>
+    <p class="section-hint">
+      Wards with low or zero CHW encounter submissions in the last {{ trendDays }} days.
     </p>
   </div>
 
-  <div class="error-message animate-fade-in" *ngIf="error">
-    <strong>⚠️ Diagnostic Error:</strong> {{ error }}
+  <button class="btn btn-primary" (click)="analyzeSymptomTrends()" [disabled]="isLoading || !selectedRegion.trim()">
+    <span class="material-symbols-outlined">search</span>
+    Run Gap Analysis
+  </button>
+
+  @if (trendAnalysis) {
+  <!-- Gap summary metrics -->
+  @if (trendAnalysis.total_gap_wards !== undefined) {
+  <div class="metric-grid mt-4">
+    <div class="metric-card alert-metric">
+      <span class="material-symbols-outlined metric-icon" style="color:#d32f2f">
+        person_off
+      </span>
+      <p class="metric-label">Gap Wards</p>
+      <p class="metric-value">{{ trendAnalysis.total_gap_wards }}</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#0288d1">
+        location_city
+      </span>
+      <p class="metric-label">County</p>
+      <p class="metric-value" style="font-size:1.1rem">{{ trendAnalysis.county }}</p>
+    </div>
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#7b1fa2">
+        calendar_month
+      </span>
+      <p class="metric-label">Days Analysed</p>
+      <p class="metric-value">{{ trendAnalysis.days_analysed ?? trendDays }}</p>
+    </div>
   </div>
 
-  <!-- Query controls -->
-  <div class="surveillance-controls-card">
-    <h3>Query Parameters</h3>
-    <div class="controls-grid">
-      <div class="input-group">
-        <label>County / Region</label>
-        <input type="text" [(ngModel)]="selectedRegion" placeholder="e.g., Kisumu" />
+  <!-- Gap wards list -->
+  @if (trendAnalysis.gap_wards?.length) {
+  <div class="breakdown-card mt-4">
+    <h3 class="breakdown-title">
+      <span class="material-symbols-outlined">list_alt</span>
+      Gap Wards Detail
+    </h3>
+    <div class="county-table">
+      <div class="ct-header">
+        <span>Ward</span>
+        <span>Encounters</span>
+        <span>Active CHWs</span>
+        <span>Severity</span>
       </div>
-      <div class="input-group">
-        <label>Trend Window (days)</label>
-        <input type="number" [(ngModel)]="trendDays" min="1" max="365" />
+      @for (ward of trendAnalysis.gap_wards; track ward.ward) {
+      <div class="ct-row">
+        <span class="ct-county">{{ ward.ward }}</span>
+        <span>{{ ward.encounter_count ?? 0 }}</span>
+        <span>{{ ward.active_chws ?? 0 }}</span>
+        <span>
+          <span class="badge" [class.badge-red]="ward.gap_severity === 'CRITICAL'"
+            [class.badge-orange]="ward.gap_severity === 'HIGH'" [class.badge-yellow]="ward.gap_severity === 'MEDIUM'">
+            {{ ward.gap_severity }}
+          </span>
+        </span>
       </div>
-    </div>
-
-    <div class="action-buttons">
-      <button (click)="getRegionAlerts()" [disabled]="isLoading" class="btn btn-primary">
-        {{ isLoading ? '⏳ Loading...' : '🚨 Get Outbreak Signals' }}
-      </button>
-      <button (click)="loadDashboard()" [disabled]="isLoading" class="btn btn-secondary-gps">
-        {{ isLoading ? '⏳ Loading...' : '📊 Load Dashboard' }}
-      </button>
+      }
     </div>
   </div>
+  }
 
-  <!-- Tab pills -->
-  <div class="tabs-container">
-    <button [class.active]="activeTab === 'dashboard'" (click)="activeTab = 'dashboard'" class="tab-pill">
-      📈 Status Summary
-    </button>
-    <button [class.active]="activeTab === 'alerts'" (click)="activeTab = 'alerts'" class="tab-pill">
-      🚨 Outbreak Alerts
-    </button>
-    <button [class.active]="activeTab === 'trends'" (click)="activeTab = 'trends'" class="tab-pill">
-      📈 CHW Outreach Gaps
-    </button>
-    <button [class.active]="activeTab === 'clusters'" (click)="activeTab = 'clusters'" class="tab-pill">
-      🗺️ Cross-County Spread
+  <!-- Recommended actions -->
+  @if (trendAnalysis.recommended_actions?.length) {
+  <div class="breakdown-card mt-4">
+    <h3 class="breakdown-title">
+      <span class="material-symbols-outlined">campaign</span>
+      Recommended Actions
+    </h3>
+    <ul class="actions-list standalone">
+      @for (action of trendAnalysis.recommended_actions; track action) {
+      <li>
+        <span class="material-symbols-outlined action-check">arrow_right</span>
+        {{ action }}
+      </li>
+      }
+    </ul>
+  </div>
+  }
+
+  } @else {
+  <!-- Fallback: unknown shape — minimal display -->
+  <div class="breakdown-card mt-4">
+    <pre class="json-preview">{{ trendAnalysis | json }}</pre>
+  </div>
+  }
+  }
+  }
+
+  <!-- ══════════════ CROSS-COUNTY SPREAD TAB ═════════════════════ -->
+  @if (activeTab === 'clusters') {
+  <div class="section-header">
+    <h2 class="section-title">Cross-County Spread Detection</h2>
+    <p class="section-hint">
+      Detects whether a syndrome is simultaneously rising in multiple counties.
+    </p>
+  </div>
+
+  <div class="search-row">
+    <input type="text" [(ngModel)]="selectedSymptom" placeholder="e.g., cholera, measles, acute_watery_diarrhea"
+      class="field-input flex-grow" />
+    <button class="btn btn-primary" (click)="checkDiseaseClusters()" [disabled]="isLoading">
+      <span class="material-symbols-outlined">travel_explore</span>
+      Detect Spread
     </button>
   </div>
 
-  <!-- ── Dashboard Tab ───────────────────────────────────────────── -->
-  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'dashboard'">
-    @if (dashboardData) {
-    <h3>National Syndromic Indicators</h3>
-    <div class="dashboard-grid" *ngIf="dashboardData.active_alerts !== undefined">
-      <div class="dashboard-card">
-        <h4>Active Alerts</h4>
-        <div class="metric-value">{{ dashboardData.active_alerts ?? 0 }}</div>
-      </div>
-      <div class="dashboard-card">
-        <h4>Encounters Today</h4>
-        <div class="metric-value">{{ dashboardData.encounters_today ?? 0 }}</div>
-      </div>
-      <div class="dashboard-card">
-        <h4>Counties Monitored</h4>
-        <div class="metric-value">{{ dashboardData.counties_monitored ?? 0 }}</div>
-      </div>
-      <div class="dashboard-card">
-        <h4>Protocols Formulated</h4>
-        <div class="metric-value">{{ dashboardData.protocols_formulated ?? 0 }}</div>
-      </div>
+  @if (clusterData) {
+  <!-- Spread summary -->
+  <div class="metric-grid mt-4">
+    <div class="metric-card" [class.alert-metric]="clusterData.spread_detected">
+      <span class="material-symbols-outlined metric-icon"
+        [style.color]="clusterData.spread_detected ? '#d32f2f' : '#388e3c'">
+        {{ clusterData.spread_detected ? 'crisis_alert' : 'check_circle' }}
+      </span>
+      <p class="metric-label">Spread Detected</p>
+      <p class="metric-value">{{ clusterData.spread_detected ? 'YES' : 'No' }}</p>
     </div>
-    <!-- Raw fallback for unknown dashboard shape -->
-    <div *ngIf="dashboardData.active_alerts === undefined" class="json-viewer">
-      <pre><code>{{ dashboardData | json }}</code></pre>
+    @if (clusterData.counties_count !== undefined) {
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#f57c00">map</span>
+      <p class="metric-label">Counties Affected</p>
+      <p class="metric-value">{{ clusterData.counties_count }}</p>
     </div>
-    } @else {
-    <div class="empty-tab-card">
-      <p>Click <strong>Load Dashboard</strong> to fetch national stats.</p>
+    }
+    @if (clusterData.escalation_level) {
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#7b1fa2">
+        flag
+      </span>
+      <p class="metric-label">Escalation</p>
+      <p class="metric-value" style="font-size:1rem">
+        {{ clusterData.escalation_level }}
+      </p>
+    </div>
+    }
+    @if (clusterData.syndrome) {
+    <div class="metric-card">
+      <span class="material-symbols-outlined metric-icon" style="color:#0288d1">
+        coronavirus
+      </span>
+      <p class="metric-label">Syndrome</p>
+      <p class="metric-value" style="font-size:1rem">
+        {{ clusterData.syndrome | titlecase }}
+      </p>
     </div>
     }
   </div>
 
-  <!-- ── Alerts Tab ──────────────────────────────────────────────── -->
-  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'alerts'">
-    <h3>Active Region Alerts</h3>
-    <p class="section-hint">
-      Signals triggered by syndrome cases exceeding rolling statistical baselines.
-    </p>
-
-    <div class="alerts-list" *ngIf="regionAlerts.length > 0">
-      <div class="surveillance-alert-card animate-fade-in" *ngFor="let alert of regionAlerts"
-        [style.border-left]="'6px solid ' + getAlertColor(alert.risk_level || '')">
-        <div class="alert-header">
-          <h4>{{ alert.syndrome | titlecase }}</h4>
-          <span class="severity-badge" [style.background-color]="getAlertColor(alert.risk_level || '') + '22'"
-            [style.color]="getAlertColor(alert.risk_level || '')">
-            {{ alert.risk_level || alert.status || 'active' }}
-          </span>
-        </div>
-
-        <p class="alert-type">{{ alert.alert_type | titlecase }}</p>
-
-        <div class="alert-details-grid">
-          <div class="detail-item" *ngIf="alert.location">
-            <span class="lbl">Location</span>
-            <span class="val">{{ alert.location.ward }}, {{ alert.location.county }}</span>
-          </div>
-          <div class="detail-item" *ngIf="alert.count">
-            <span class="lbl">Case Count</span>
-            <span class="val">{{ alert.count }}</span>
-          </div>
-          <div class="detail-item" *ngIf="alert.percent_above_baseline">
-            <span class="lbl">Above Baseline</span>
-            <span class="val">+{{ alert.percent_above_baseline }}%</span>
-          </div>
-          <div class="detail-item" *ngIf="alert.escalation_level">
-            <span class="lbl">Escalation</span>
-            <span class="val">{{ alert.escalation_level }}</span>
-          </div>
-          <div class="detail-item" *ngIf="alert.detected_at">
-            <span class="lbl">Detected</span>
-            <span class="val">{{ alert.detected_at | date:'short' }}</span>
-          </div>
-        </div>
-
-        <div class="recommendations-box" *ngIf="alert.recommended_actions && alert.recommended_actions.length > 0">
-          <h5>⚕️ MoH Recommended Response</h5>
-          <ul class="rec-list">
-            <li *ngFor="let rec of alert.recommended_actions">
-              <span class="checkbox">✓</span>
-              <span class="text">{{ rec }}</span>
-            </li>
-          </ul>
-        </div>
+  <!-- Affected counties table -->
+  @if (clusterData.counties_affected?.length) {
+  <div class="breakdown-card mt-4">
+    <h3 class="breakdown-title">
+      <span class="material-symbols-outlined">location_on</span>
+      Affected Counties
+    </h3>
+    <div class="county-table">
+      <div class="ct-header">
+        <span>County</span>
+        <span>Cases</span>
+        <span>Wards Affected</span>
+        <span>Latest Case</span>
       </div>
-    </div>
-
-    <div class="empty-tab-card" *ngIf="regionAlerts.length === 0">
-      <p>No active outbreak alerts for the selected region.</p>
+      @for (c of clusterData.counties_affected; track c.county) {
+      <div class="ct-row">
+        <span class="ct-county">{{ c.county }}</span>
+        <span><span class="badge badge-red">{{ c.count }}</span></span>
+        <span>{{ c.wards_affected ?? '—' }}</span>
+        <span class="mat-label-small">{{ c.latest_case | date:'dd MMM HH:mm' }}</span>
+      </div>
+      }
     </div>
   </div>
+  }
+  }
 
-  <!-- ── CHW Outreach Gaps Tab ───────────────────────────────────── -->
-  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'trends'">
-    <h3>CHW Outreach Gap Analysis</h3>
-    <p class="section-hint">
-      Identifies wards with low or zero CHW encounter submissions in the last
-      {{ trendDays }} days.
-    </p>
-
-    <button (click)="analyzeSymptomTrends()" [disabled]="isLoading || !selectedRegion" class="btn btn-primary">
-      {{ isLoading ? 'Analysing...' : '📈 Run Gap Analysis' }}
-    </button>
-
-    <div class="trend-results animate-fade-in" *ngIf="trendAnalysis">
-      <h4>Gap Analysis — {{ selectedRegion }}</h4>
-      <div class="trend-data-preview">
-        <pre><code>{{ trendAnalysis | json }}</code></pre>
-      </div>
-    </div>
+  @if (!clusterData && !isLoading) {
+  <div class="empty-state mt-4">
+    <span class="material-symbols-outlined empty-icon">travel_explore</span>
+    <p>Enter a syndrome name and click Detect Spread.</p>
   </div>
-
-  <!-- ── Cross-County Spread Tab ────────────────────────────────── -->
-  <div class="tab-content animate-fade-in" *ngIf="activeTab === 'clusters'">
-    <h3>Cross-County Spread Detection</h3>
-    <p class="section-hint">
-      Detects whether a syndrome is simultaneously rising in multiple counties.
-    </p>
-
-    <div class="symptom-search-card">
-      <input type="text" [(ngModel)]="selectedSymptom" placeholder="e.g., acute_watery_diarrhea, cholera..." />
-      <button (click)="checkDiseaseClusters()" [disabled]="isLoading" class="btn btn-primary">
-        {{ isLoading ? '⏳ Calculating...' : '🔍 Detect Spread' }}
-      </button>
-    </div>
-
-    <div class="trend-results animate-fade-in" *ngIf="clusterData">
-      <div class="dashboard-grid" *ngIf="clusterData.spread_detected !== undefined">
-        <div class="dashboard-card" [style.border-color]="clusterData.spread_detected ? '#d32f2f' : '#388e3c'">
-          <h4>Spread Detected</h4>
-          <div class="metric-value">{{ clusterData.spread_detected ? 'YES' : 'No' }}</div>
-        </div>
-        <div class="dashboard-card" *ngIf="clusterData.counties_count !== undefined">
-          <h4>Counties Affected</h4>
-          <div class="metric-value">{{ clusterData.counties_count }}</div>
-        </div>
-        <div class="dashboard-card" *ngIf="clusterData.escalation_level">
-          <h4>Escalation Level</h4>
-          <div class="metric-value">{{ clusterData.escalation_level }}</div>
-        </div>
-      </div>
-      <div class="trend-data-preview" *ngIf="clusterData.counties_affected?.length">
-        <label>Affected Counties</label>
-        <pre><code>{{ clusterData.counties_affected | json }}</code></pre>
-      </div>
-    </div>
-
-    <div class="empty-tab-card" *ngIf="!clusterData">
-      <p>Enter a syndrome name and click Detect Spread to check cross-county signals.</p>
-    </div>
-  </div>
+  }
+  }
 
 </div>

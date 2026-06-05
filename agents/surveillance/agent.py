@@ -41,6 +41,10 @@ CORRELATED_SYNDROMES = {
     frozenset({"acute_rash_with_fever", "acute_febrile_illness"}): "measles",
     frozenset({"acute_respiratory_infection", "acute_febrile_illness"}): "influenza",
     frozenset({"malnutrition_severe", "acute_watery_diarrhea"}): "severe_acute_malnutrition",
+    frozenset({"acute_febrile_illness", "acute_rash_with_fever", "malaria"}): "malaria",
+    frozenset({"acute_febrile_illness", "dengue"}): "dengue",
+    frozenset({"acute_respiratory_infection", "tuberculosis"}): "tuberculosis",
+    frozenset({"viral_hemorrhagic_fever", "ebola"}): "ebola",
 }
 
 # ── WHO/MoH Kenya response protocol templates ─────────────────────────────────
@@ -151,6 +155,221 @@ PROTOCOL_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "reporting_threshold": 5,
         "who_idsr_code": "UNK",
     },
+    # ── Ebola / Viral Haemorrhagic Fever ─────────────────────────────────────
+    "ebola": {
+        "syndrome": "ebola",
+        "alert_level": "RED",
+        "immediate_actions": [
+            "Isolate suspected case IMMEDIATELY — single room, strict barrier nursing",
+            "Notify MOH Emergency Operations Centre within 1 hour",
+            "Activate county Ebola rapid response team",
+            "Begin contact listing for all persons in contact within last 21 days",
+            "Deploy personal protective equipment (PPE level 3) for all responders",
+            "Seal off affected ward/facility — no patient transfers without MOH clearance",
+        ],
+        "chw_actions": [
+            "Do NOT enter the patient's home without PPE — call supervisor first",
+            "List all household members and close contacts",
+            "Monitor contacts twice daily for fever, vomiting, bleeding — 21 days",
+            "Record all contacts via SihaLink and flag triage RED",
+            "Do not handle deceased — await trained burial team",
+        ],
+        "follow_up_days": [1, 2, 3, 5, 7, 10, 14, 21],
+        "reporting_threshold": 1,
+        "who_idsr_code": "EBO",
+    },
+    # ── COVID-19 / SARS-CoV-2 ─────────────────────────────────────────────────
+    "covid_19": {
+        "syndrome": "covid_19",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Isolate confirmed/suspected case at home or designated facility",
+            "Notify county disease surveillance coordinator",
+            "Initiate rapid antigen or PCR testing through county lab network",
+            "Begin contact tracing for household and workplace contacts",
+            "Issue community advisory on mask use, ventilation, hand hygiene",
+        ],
+        "chw_actions": [
+            "Conduct daily follow-up calls for isolated cases — days 1 through 14",
+            "Screen household contacts using SihaLink intake form",
+            "Refer severe cases (SpO2 < 94%, fast breathing) immediately",
+            "Support vaccination catch-up for unvaccinated household members",
+        ],
+        "follow_up_days": [1, 3, 5, 7, 10, 14],
+        "reporting_threshold": 1,
+        "who_idsr_code": "COV",
+    },
+    # ── Yellow Fever ──────────────────────────────────────────────────────────
+    "yellow_fever": {
+        "syndrome": "yellow_fever",
+        "alert_level": "RED",
+        "immediate_actions": [
+            "Confirm with rapid diagnostic test — notify MOH within 24 hours",
+            "Activate county yellow fever rapid response team",
+            "Plan emergency mass vaccination campaign (17D vaccine) within 72 hours",
+            "Conduct entomological survey — identify Aedes aegypti breeding sites",
+            "Implement vector control (indoor residual spraying, larviciding)",
+        ],
+        "chw_actions": [
+            "Identify all unvaccinated persons in affected ward",
+            "Support door-to-door vaccination campaign",
+            "Educate households on mosquito net use and elimination of breeding sites",
+            "Follow up confirmed cases at days 3, 7, and 14",
+        ],
+        "follow_up_days": [3, 7, 14],
+        "reporting_threshold": 1,
+        "who_idsr_code": "YEF",
+    },
+    # ── Malaria ───────────────────────────────────────────────────────────────
+    "malaria": {
+        "syndrome": "malaria",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Confirm with rapid diagnostic test (RDT) before treatment",
+            "Administer ACT (artemether-lumefantrine) per national treatment guidelines",
+            "Refer severe malaria (altered consciousness, convulsions, anaemia) immediately",
+            "Notify county malaria coordinator if cluster of ≥5 cases in 48h",
+            "Check and replenish RDT and ACT stock at facility level",
+        ],
+        "chw_actions": [
+            "Distribute long-lasting insecticidal nets (LLINs) to affected households",
+            "Conduct LLIN use assessment during household visits",
+            "Screen under-5s and pregnant women with RDT",
+            "Follow up all confirmed cases at 3 and 7 days",
+            "Report any treatment failure to facility-in-charge immediately",
+        ],
+        "follow_up_days": [3, 7, 14],
+        "reporting_threshold": 5,
+        "who_idsr_code": "MAL",
+    },
+    # ── Poliomyelitis ─────────────────────────────────────────────────────────
+    "poliomyelitis": {
+        "syndrome": "poliomyelitis",
+        "alert_level": "RED",
+        "immediate_actions": [
+            "Report ANY case of acute flaccid paralysis (AFP) within 24 hours to MOH",
+            "Collect two stool specimens 24–48h apart — send to national reference lab",
+            "Activate county AFP surveillance team",
+            "Plan supplementary immunisation activity (SIA) within 4 weeks",
+            "Conduct active case search in all health facilities and community",
+        ],
+        "chw_actions": [
+            "Identify all children under 15 with acute onset flaccid paralysis",
+            "Map unvaccinated or under-vaccinated children in affected ward",
+            "Support house-to-house OPV vaccination campaign",
+            "Follow up AFP cases at 60 days for residual paralysis assessment",
+        ],
+        "follow_up_days": [7, 14, 30, 60],
+        "reporting_threshold": 1,
+        "who_idsr_code": "POL",
+    },
+    # ── Tuberculosis ──────────────────────────────────────────────────────────
+    "tuberculosis": {
+        "syndrome": "tuberculosis",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Confirm with sputum smear or GeneXpert MTB/RIF testing",
+            "Register on county TB register and notify NTLD programme",
+            "Initiate 6-month directly observed therapy (DOTS) immediately",
+            "Screen all household contacts with symptom screen and chest X-ray",
+            "Offer HIV testing to all confirmed TB patients",
+        ],
+        "chw_actions": [
+            "Provide daily DOTS supervision for at least first 2 months",
+            "Trace all defaulters within 24 hours of missed dose",
+            "Screen household contacts — refer anyone with cough >2 weeks",
+            "Conduct sputum follow-up tests at months 2, 5, and 6",
+            "Follow up at weeks 2, 4, 8, then monthly through treatment",
+        ],
+        "follow_up_days": [7, 14, 28, 60, 90, 150, 180],
+        "reporting_threshold": 1,
+        "who_idsr_code": "TUB",
+    },
+    # ── Pneumonia ─────────────────────────────────────────────────────────────
+    "pneumonia": {
+        "syndrome": "pneumonia",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Classify severity using WHO IMCI/ARI guidelines (fast breathing, chest indrawing)",
+            "Administer amoxicillin per national treatment protocol",
+            "Refer severe pneumonia (SpO2 < 90%, unable to drink) immediately",
+            "Ensure adequate oxygen supply at facility level",
+            "Alert county if cluster of severe paediatric pneumonia in 48h",
+        ],
+        "chw_actions": [
+            "Screen all under-5s with cough or difficulty breathing",
+            "Count respiratory rate — refer if above age-specific threshold",
+            "Educate caregivers on danger signs (grunting, cyanosis, chest indrawing)",
+            "Confirm pneumococcal and Hib vaccination status — refer for catch-up",
+            "Follow up at 48h and 5 days for all treated cases",
+        ],
+        "follow_up_days": [2, 5, 10],
+        "reporting_threshold": 10,
+        "who_idsr_code": "PNE",
+    },
+    # ── Dengue Fever ──────────────────────────────────────────────────────────
+    "dengue": {
+        "syndrome": "dengue",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Confirm with dengue NS1 antigen or IgM/IgG rapid test",
+            "Notify county vector control unit within 24 hours",
+            "Initiate emergency vector control — fogging and source reduction",
+            "Monitor for dengue haemorrhagic fever warning signs (bleeding, platelet drop)",
+            "Ensure IV fluid availability at referral facility",
+        ],
+        "chw_actions": [
+            "Conduct household survey for Aedes breeding sites (tyres, containers, pots)",
+            "Distribute insecticide-treated bed nets and repellent",
+            "Daily follow-up for confirmed cases — days 1 through 7",
+            "Refer immediately if bleeding, persistent vomiting, or abdominal pain",
+        ],
+        "follow_up_days": [1, 2, 3, 5, 7],
+        "reporting_threshold": 1,
+        "who_idsr_code": "DEN",
+    },
+    # ── Typhoid Fever ─────────────────────────────────────────────────────────
+    "typhoid": {
+        "syndrome": "typhoid",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Confirm with Widal test or blood culture — collect before antibiotics",
+            "Administer azithromycin or ciprofloxacin per national protocol",
+            "Investigate water source — collect water samples for bacteriological analysis",
+            "Issue boil-water advisory if community water supply is implicated",
+            "Notify county WASH coordinator",
+        ],
+        "chw_actions": [
+            "Conduct household WASH assessment — water storage, latrine use",
+            "Identify food handlers in affected area — screen for typhoid",
+            "Promote hand hygiene and safe water treatment at household level",
+            "Follow up all confirmed cases at days 3, 7, and 14",
+        ],
+        "follow_up_days": [3, 7, 14],
+        "reporting_threshold": 3,
+        "who_idsr_code": "TYP",
+    },
+    # ── HIV/AIDS ──────────────────────────────────────────────────────────────
+    "hiv_aids": {
+        "syndrome": "hiv_aids",
+        "alert_level": "YELLOW",
+        "immediate_actions": [
+            "Offer voluntary HIV testing and counselling (HTC)",
+            "Link newly diagnosed to ART initiation within 7 days (Test and Treat)",
+            "Screen for TB co-infection and opportunistic infections",
+            "Notify county HIV/AIDS coordinator for programme tracking",
+            "Initiate PMTCT cascade if patient is pregnant",
+        ],
+        "chw_actions": [
+            "Support treatment adherence — daily check-in for first month",
+            "Offer index client testing to sexual and needle-sharing contacts",
+            "Conduct viral load follow-up support at 3 and 6 months",
+            "Trace and re-link ART defaulters within 48 hours",
+        ],
+        "follow_up_days": [7, 14, 30, 90, 180],
+        "reporting_threshold": 1,
+        "who_idsr_code": "HIV",
+    },
 }
 
 # ── MongoDB singleton ─────────────────────────────────────────────────────────
@@ -172,13 +391,21 @@ def _get_db():
 
 def _ensure_indexes(db):
     try:
+        # ── Migration: drop the old single-field syndrome_1 unique index if it
+        # still exists. It conflicts with the correct compound (syndrome, county)
+        # unique index and causes E11000 on every second protocol upsert.
+        existing = {idx["name"] for idx in db.protocols.list_indexes()}
+        if "syndrome_1" in existing:
+            db.protocols.drop_index("syndrome_1")
+            logger.info("✅ Dropped legacy protocols.syndrome_1 index (replaced by compound)")
+
         db.encounters.create_index([("location", GEOSPHERE)])
         db.encounters.create_index([("extracted.syndrome", 1), ("timestamp", -1)])
         db.encounters.create_index([("admin_hierarchy.county", 1), ("timestamp", -1)])
         db.encounters.create_index([("chw_id", 1), ("timestamp", -1)])
         db.baselines.create_index([("county", 1), ("syndrome", 1)], unique=True)
         db.alerts.create_index([("location.county", 1), ("status", 1), ("timestamp", -1)])
-        db.protocols.create_index([("syndrome", 1)], unique=True)
+        db.protocols.create_index([("syndrome", 1), ("county", 1)], unique=True)
         db.chws.create_index([("chw_id", 1)], unique=True)
         db.chws.create_index([("county", 1), ("ward", 1)])
         db.follow_ups.create_index([("encounter_id", 1)])
@@ -395,43 +622,78 @@ def detect_cross_county_spread(syndrome: str, hours: int = 48) -> dict:
 def formulate_response_protocol(syndrome: str, county: str, alert_level: str = "YELLOW") -> dict:
     """
     Generate and persist a structured response protocol for a detected syndrome.
-    Combines WHO IDSR guidelines with Kenya MoH protocols and local context.
-    Protocols are stored in MongoDB for CHW retrieval via Telegram /protocol command.
+
+    Strategy (two-tier):
+      Tier 1 — AGENTIC: Calls the Protocol Research Agent (Gemini 2.0 Flash +
+               Google Search) to research WHO, CDC, ECDC, and Kenya MoH guidelines
+               in real time, then synthesise a tailored protocol.
+      Tier 2 — TEMPLATE FALLBACK: If the research agent fails or times out,
+               falls back to the pre-built PROTOCOL_TEMPLATES.
+
+    Both paths upsert the result into MongoDB so CHWs can retrieve it via
+    the Telegram /protocol command.
 
     Args:
-        syndrome: WHO IDSR syndrome category.
-        county: Affected county (for localisation).
-        alert_level: RED, YELLOW, or GREEN.
+        syndrome:     WHO IDSR syndrome category.
+        county:       Affected county (for localisation).
+        alert_level:  RED, YELLOW, or GREEN.
 
     Returns:
         dict with protocol_id, immediate_actions, chw_actions,
-        follow_up_days, and reporting_threshold.
+        follow_up_days, source_authority, and sources_consulted.
     """
+    # ── Tier 1: Agentic research via Protocol Research Agent ─────────────────
+    try:
+        from .protocol_agent import research_and_formulate_protocol_sync
+        logger.info(
+            "[Protocol] 🔍 Researching %s protocol (WHO/CDC/MOH) via Gemini Search...",
+            syndrome,
+        )
+        result = research_and_formulate_protocol_sync(syndrome, county, alert_level)
+        if result and not result.get("error") and result.get("immediate_actions"):
+            logger.info(
+                "[Protocol] ✅ Agentic protocol formulated for %s/%s — source: %s",
+                syndrome, county, result.get("source_authority", "AI-researched"),
+            )
+            return result
+        logger.warning(
+            "[Protocol] Agentic research returned incomplete result for %s — falling back",
+            syndrome,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Protocol] Agentic research failed for %s (%s) — using template fallback",
+            syndrome, exc,
+        )
+
+    # ── Tier 2: Template fallback ─────────────────────────────────────────────
     db = _get_db()
     template = PROTOCOL_TEMPLATES.get(syndrome, PROTOCOL_TEMPLATES["default"]).copy()
     template["alert_level"] = alert_level
 
     protocol_doc = {
-        "protocol_id": f"PROTO-{syndrome.upper()[:6]}-{county[:3].upper()}-{datetime.utcnow().strftime('%Y%m%d')}",
-        "syndrome": syndrome,
-        "county": county,
-        "alert_level": alert_level,
-        "immediate_actions": template["immediate_actions"],
-        "chw_actions": template["chw_actions"],
-        "follow_up_days": template["follow_up_days"],
+        "protocol_id":        f"PROTO-{syndrome.upper()[:6]}-{county[:3].upper()}-{datetime.utcnow().strftime('%Y%m%d')}",
+        "syndrome":           syndrome,
+        "county":             county,
+        "alert_level":        alert_level,
+        "immediate_actions":  template["immediate_actions"],
+        "chw_actions":        template["chw_actions"],
+        "follow_up_days":     template["follow_up_days"],
         "reporting_threshold": template["reporting_threshold"],
-        "who_idsr_code": template.get("who_idsr_code", "UNK"),
-        "created_at": datetime.utcnow().isoformat(),
-        "status": "active",
-        "version": 1,
+        "who_idsr_code":      template.get("who_idsr_code", "UNK"),
+        "source_authority":   "TEMPLATE",
+        "sources_consulted":  ["SihaLink built-in WHO IDSR template"],
+        "research_summary":   "Protocol sourced from pre-built WHO IDSR template (research agent unavailable).",
+        "created_at":         datetime.utcnow().isoformat(),
+        "status":             "active",
     }
 
     db.protocols.update_one(
         {"syndrome": syndrome, "county": county},
-        {"$set": protocol_doc, "$inc": {"version": 0}},
+        {"$set": protocol_doc, "$inc": {"version": 1}},
         upsert=True,
     )
-    logger.info("Protocol formulated: %s for %s", syndrome, county)
+    logger.info("[Protocol] Template protocol formulated: %s for %s", syndrome, county)
     return protocol_doc
 
 

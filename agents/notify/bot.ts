@@ -14,52 +14,60 @@
  */
 
 // ── Dynatrace / OpenTelemetry bootstrap ──────────────────────────────────────
-// Must be the FIRST code executed so auto-instrumentation can patch Node.js
-// HTTP, Fastify, and fetch before they are imported.
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
-import { Resource } from "@opentelemetry/resources";
-import {
-  SEMRESATTRS_SERVICE_NAME,
-  SEMRESATTRS_SERVICE_VERSION,
-  SEMRESATTRS_DEPLOYMENT_ENVIRONMENT,
-} from "@opentelemetry/semantic-conventions";
-
+// Loaded dynamically so the bot starts even when OTel packages are not
+// installed (e.g. during local dev before npm install is run).
 const DT_ENV_ID = process.env.DYNATRACE_ENV_ID;
 const DT_API_TOKEN = process.env.DYNATRACE_API_TOKEN;
 
-if (DT_ENV_ID && DT_API_TOKEN) {
-  const sdk = new NodeSDK({
-    resource: new Resource({
-      [SEMRESATTRS_SERVICE_NAME]: "sihalink-notify-agent",
-      [SEMRESATTRS_SERVICE_VERSION]: "1.0.0",
-      [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]:
-        process.env.ENVIRONMENT ?? "production",
-    }),
-    traceExporter: new OTLPTraceExporter({
-      url: `https://${DT_ENV_ID}.live.dynatrace.com/api/v2/otlp/v1/traces`,
-      headers: { Authorization: `Api-Token ${DT_API_TOKEN}` },
-    }),
-    instrumentations: [
-      getNodeAutoInstrumentations({
-        // Instrument all outgoing HTTP calls (to Python backend + Telegram API)
-        "@opentelemetry/instrumentation-http": { enabled: true },
-        "@opentelemetry/instrumentation-fetch": { enabled: true },
-      }),
-    ],
-  });
+(async () => {
+  if (!DT_ENV_ID || !DT_API_TOKEN) {
+    console.log(
+      "ℹ️  DYNATRACE_ENV_ID / DYNATRACE_API_TOKEN not set — telemetry disabled",
+    );
+    return;
+  }
+  try {
+    const { NodeSDK } = await import("@opentelemetry/sdk-node");
+    const { OTLPTraceExporter } =
+      await import("@opentelemetry/exporter-trace-otlp-http");
+    const { getNodeAutoInstrumentations } =
+      await import("@opentelemetry/auto-instrumentations-node");
+    const { Resource } = await import("@opentelemetry/resources");
+    const {
+      SEMRESATTRS_SERVICE_NAME,
+      SEMRESATTRS_SERVICE_VERSION,
+      SEMRESATTRS_DEPLOYMENT_ENVIRONMENT,
+    } = await import("@opentelemetry/semantic-conventions");
 
-  sdk.start();
-  process.on("SIGTERM", () => sdk.shutdown());
-  console.log(
-    `✅ Dynatrace OTel active → https://${DT_ENV_ID}.live.dynatrace.com`,
-  );
-} else {
-  console.log(
-    "ℹ️  DYNATRACE_ENV_ID / DYNATRACE_API_TOKEN not set — telemetry disabled",
-  );
-}
+    const sdk = new NodeSDK({
+      resource: new Resource({
+        [SEMRESATTRS_SERVICE_NAME]: "sihalink-notify-agent",
+        [SEMRESATTRS_SERVICE_VERSION]: "1.0.0",
+        [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]:
+          process.env.ENVIRONMENT ?? "production",
+      }),
+      traceExporter: new OTLPTraceExporter({
+        url: `https://${DT_ENV_ID}.live.dynatrace.com/api/v2/otlp/v1/traces`,
+        headers: { Authorization: `Api-Token ${DT_API_TOKEN}` },
+      }),
+      instrumentations: [
+        getNodeAutoInstrumentations({
+          "@opentelemetry/instrumentation-http": { enabled: true },
+        }),
+      ],
+    });
+
+    sdk.start();
+    process.on("SIGTERM", () => sdk.shutdown());
+    console.log(
+      `✅ Dynatrace OTel active → https://${DT_ENV_ID}.live.dynatrace.com`,
+    );
+  } catch (err) {
+    console.log(
+      "ℹ️  OTel packages not installed — telemetry disabled. Run: npm install",
+    );
+  }
+})();
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Fastify, { FastifyRequest, FastifyReply } from "fastify";
@@ -357,52 +365,20 @@ bot.command("report", async (ctx: MyContext) => {
   const thinking = await ctx.reply("⏳ Processing report...");
 
   try {
-    const result = await post<BackendIntakeResponse>("/intake/telegram", {
+    // Start full encounter state machine lifecycle asynchronously
+    await post("/encounter/start", {
       session_id: sid,
-      chw_id: chatId,
-      message_text: text,
-      language_hint: undefined,
+      telegram_payload: {
+        chw_id: chatId,
+        message_text: text,
+      },
     });
 
-    const ext = result.extracted ?? {};
-    const triage = ext.triage_color ?? "UNKNOWN";
-    const emoji = triageEmoji(triage);
-    const conf = Math.round((ext.confidence ?? 0) * 100);
-
-    await ctx.api
-      .deleteMessage(ctx.chat!.id, thinking.message_id)
-      .catch(() => undefined);
-
-    await ctx.reply(
-      `${emoji} *Encounter Recorded*\n` +
-        `━━━━━━━━━━━━━━\n` +
-        `*Syndrome:*  ${ext.syndrome ?? "—"}\n` +
-        `*Triage:*    ${triage}\n` +
-        `*Language:*  ${ext.detected_language ?? "—"}\n` +
-        `*Complaint:* ${ext.chief_complaint ?? "—"}\n` +
-        `*Confidence:* ${conf}%\n` +
-        `*Session:* \`${sid}\``,
-      { parse_mode: "Markdown" },
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      thinking.message_id,
+      "⚡ Encounter lifecycle started. You will receive updates shortly.",
     );
-
-    if (ext.clarification_needed && ext.clarification_question) {
-      await ctx.reply(`❓ ${ext.clarification_question}`);
-      ctx.session.pendingReport = sid;
-    } else if (triage === "RED") {
-      await ctx.reply(
-        "🔴 *URGENT* — referral dispatched automatically to nearest facility.",
-        { parse_mode: "Markdown" },
-      );
-    } else if (triage === "YELLOW") {
-      const kb = new InlineKeyboard()
-        .text("✅ Confirm Referral", `confirm_${sid}`)
-        .text("❌ Decline", `decline_${sid}`);
-      await ctx.reply("Confirm patient referral to nearest facility?", {
-        reply_markup: kb,
-      });
-    } else {
-      await ctx.reply("🟢 Logged for routine 7-day follow-up. Thank you.");
-    }
   } catch (err: unknown) {
     await ctx.api
       .deleteMessage(ctx.chat!.id, thinking.message_id)
@@ -433,40 +409,24 @@ bot.on("message:voice", async (ctx: MyContext) => {
     await ctx.api.editMessageText(
       ctx.chat!.id,
       thinking.message_id,
-      "🧠 Analysing clinical content...",
+      "🧠 Starting encounter analysis...",
     );
 
-    const result = await post<BackendIntakeResponse>("/intake/telegram", {
+    // Start full encounter state machine lifecycle asynchronously
+    await post("/encounter/start", {
       session_id: sid,
-      chw_id: chatId,
       audio_base64: b64,
+      telegram_payload: {
+        chw_id: chatId,
+        audio_base64: b64,
+      },
     });
 
-    const ext = result.extracted ?? {};
-    const triage = ext.triage_color ?? "UNKNOWN";
-    const emoji = triageEmoji(triage);
-
-    await ctx.api
-      .deleteMessage(ctx.chat!.id, thinking.message_id)
-      .catch(() => undefined);
-
-    await ctx.reply(
-      `${emoji} *Voice Report Processed*\n` +
-        `━━━━━━━━━━━━━━\n` +
-        `*Syndrome:*  ${ext.syndrome ?? "—"}\n` +
-        `*Triage:*    ${triage}\n` +
-        `*Language:*  ${ext.detected_language ?? "—"}\n` +
-        `*Complaint:* ${ext.chief_complaint ?? "—"}\n` +
-        `*Session:* \`${sid}\``,
-      { parse_mode: "Markdown" },
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      thinking.message_id,
+      "⚡ Encounter lifecycle started. You will receive updates shortly.",
     );
-
-    if (triage === "YELLOW") {
-      const kb = new InlineKeyboard()
-        .text("✅ Confirm Referral", `confirm_${sid}`)
-        .text("❌ Decline", `decline_${sid}`);
-      await ctx.reply("Confirm referral?", { reply_markup: kb });
-    }
   } catch (err: unknown) {
     await ctx.api
       .deleteMessage(ctx.chat!.id, thinking.message_id)
@@ -517,16 +477,25 @@ bot.command("protocol", async (ctx: MyContext) => {
   if (!syndrome) {
     await ctx.reply(
       "Usage: `/protocol <syndrome>`\n\nExamples:\n" +
-        "`/protocol cholera`\n`/protocol measles`\n`/protocol acute_watery_diarrhea`",
+        "`/protocol cholera`\n`/protocol measles`\n`/protocol malaria`\n`/protocol ebola`",
       { parse_mode: "Markdown" },
     );
     return;
   }
 
+  const county = ctx.session.registeredCounty;
+  const thinking = await ctx.reply("🔍 Researching WHO/CDC/MOH guidelines...");
+
   try {
+    // First try to get an existing protocol from MongoDB
     const p = await get<BackendProtocol>(
-      `/tool/protocol/${encodeURIComponent(syndrome)}`,
+      `/tool/protocol/${encodeURIComponent(syndrome)}${county ? `?county=${encodeURIComponent(county)}` : ""}`,
     );
+
+    await ctx.api
+      .deleteMessage(ctx.chat!.id, thinking.message_id)
+      .catch(() => undefined);
+
     const actions = (p.immediate_actions ?? [])
       .slice(0, 4)
       .map((a: string) => `• ${a}`)
@@ -536,6 +505,11 @@ bot.command("protocol", async (ctx: MyContext) => {
       .map((a: string) => `• ${a}`)
       .join("\n");
 
+    // Show source authority badge
+    const source = (p as any).source_authority;
+    const sourceBadge =
+      source && source !== "TEMPLATE" ? `\n\n_📚 Source: ${source}_` : "";
+
     await ctx.reply(
       `📋 *${syndrome.toUpperCase()} Protocol*\n` +
         `━━━━━━━━━━━━━━\n` +
@@ -543,12 +517,65 @@ bot.command("protocol", async (ctx: MyContext) => {
         `*WHO Code:* ${p.who_idsr_code ?? "—"}\n\n` +
         `*Immediate Actions:*\n${actions}\n\n` +
         `*CHW Actions:*\n${chwActions}\n\n` +
-        `_Full protocol: ${DASHBOARD}_`,
+        `_Full protocol: ${DASHBOARD}_` +
+        sourceBadge,
       { parse_mode: "Markdown" },
     );
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await ctx.reply(`❌ Protocol not found for "${syndrome}": ${msg}`);
+    // Protocol not in DB — trigger agentic research, then retry
+    await ctx.api
+      .editMessageText(
+        ctx.chat!.id,
+        thinking.message_id,
+        "🧠 No protocol found — researching WHO, CDC, and Kenya MOH guidelines...",
+      )
+      .catch(() => undefined);
+
+    try {
+      await post("/tool/research_protocol", {
+        syndrome,
+        county: county || "all",
+        alert_level: "YELLOW",
+      });
+
+      // Re-fetch the freshly researched protocol
+      const p2 = await get<BackendProtocol>(
+        `/tool/protocol/${encodeURIComponent(syndrome)}`,
+      );
+      await ctx.api
+        .deleteMessage(ctx.chat!.id, thinking.message_id)
+        .catch(() => undefined);
+
+      const actions2 = (p2.immediate_actions ?? [])
+        .slice(0, 4)
+        .map((a: string) => `• ${a}`)
+        .join("\n");
+      const chw2 = (p2.chw_actions ?? [])
+        .slice(0, 3)
+        .map((a: string) => `• ${a}`)
+        .join("\n");
+      const src2 = (p2 as any).source_authority;
+      const srcBadge2 =
+        src2 && src2 !== "TEMPLATE" ? `\n\n_📚 Source: ${src2}_` : "";
+
+      await ctx.reply(
+        `📋 *${syndrome.toUpperCase()} Protocol* _(AI-researched)_\n` +
+          `━━━━━━━━━━━━━━\n` +
+          `*Alert Level:* ${p2.alert_level ?? "YELLOW"}\n` +
+          `*WHO Code:* ${p2.who_idsr_code ?? "—"}\n\n` +
+          `*Immediate Actions:*\n${actions2}\n\n` +
+          `*CHW Actions:*\n${chw2}\n\n` +
+          `_Full protocol: ${DASHBOARD}_` +
+          srcBadge2,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err2: unknown) {
+      await ctx.api
+        .deleteMessage(ctx.chat!.id, thinking.message_id)
+        .catch(() => undefined);
+      const msg = err2 instanceof Error ? err2.message : String(err2);
+      await ctx.reply(`❌ Protocol not available for "${syndrome}": ${msg}`);
+    }
   }
 });
 
@@ -597,7 +624,7 @@ bot.command("alerts", async (ctx: MyContext) => {
     const alerts = result.alerts ?? [];
 
     if (alerts.length === 0) {
-      await ctx.reply(`✅ No active alerts for *${county}*. All clear.`, {
+      await ctx.reply(`% Active Alerts — ${county} (0)%\nAll clear.`, {
         parse_mode: "Markdown",
       });
       return;
@@ -718,6 +745,70 @@ bot.command("broadcast", async (ctx: MyContext) => {
 
 bot.command("dashboard", async (ctx: MyContext) => {
   await ctx.reply(`📊 Open the SihaLink surveillance dashboard:\n${DASHBOARD}`);
+});
+
+// ── General Text Message Listener — handles active gates and fallback ────────
+
+bot.on("message:text", async (ctx: MyContext) => {
+  const chatId = String(ctx.from?.id ?? "unknown");
+  const text = ctx.message?.text?.trim();
+
+  // Ignore missing text or commands
+  if (!text || text.startsWith("/")) return;
+
+  const thinking = await ctx.reply("⏳ Processing...");
+
+  try {
+    // Step 1: check if there's an active human-in-the-loop gate for this chat
+    const gateRes = await post<{
+      status: string;
+      session_id?: string;
+      gate?: string;
+    }>("/encounter/gate/respond", { chat_id: chatId, text }).catch(
+      (): { status: string; session_id?: string; gate?: string } => ({
+        status: "no_gate",
+      }),
+    );
+
+    if (gateRes.status === "resolved") {
+      await ctx.api
+        .deleteMessage(ctx.chat!.id, thinking.message_id)
+        .catch(() => undefined);
+      await ctx.reply(
+        `✅ Response submitted for session \`${gateRes.session_id}\` (${gateRes.gate} gate).`,
+        { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
+    // Step 2: route through the ADK Gemini orchestrator — truly agentic
+    // Gemini reads the message, picks tools, chains them, and replies
+    const agentRes = await post<{
+      status: string;
+      response?: string;
+      error?: string;
+    }>("/encounter/respond", { chat_id: chatId, text });
+
+    await ctx.api
+      .deleteMessage(ctx.chat!.id, thinking.message_id)
+      .catch(() => undefined);
+
+    if (agentRes.response) {
+      // Truncate to Telegram's 4096 char limit
+      const reply = agentRes.response.slice(0, 4000);
+      await ctx.reply(reply, { parse_mode: "Markdown" }).catch(
+        () => ctx.reply(reply), // retry without Markdown if parse fails
+      );
+    } else {
+      await ctx.reply("✅ Request processed by the SihaLink agent swarm.");
+    }
+  } catch (err: unknown) {
+    await ctx.api
+      .deleteMessage(ctx.chat!.id, thinking.message_id)
+      .catch(() => undefined);
+    const msg = err instanceof Error ? err.message : String(err);
+    await ctx.reply(`❌ Failed to process: ${msg}`);
+  }
 });
 
 // ── inline button: confirm / decline referral ─────────────────────────────────
@@ -857,15 +948,35 @@ export async function dispatchOutbreakAlert(
       parse_mode: "Markdown",
       reply_markup: kb,
     });
+    return; // county channel succeeded — done
   } catch {
-    // Fall back to sending to the configured facility chat
-    const fallback = process.env.FACILITY_TELEGRAM_ID;
-    if (fallback) {
-      await bot.api.sendMessage(fallback, text, {
-        parse_mode: "Markdown",
-        reply_markup: kb,
-      });
-    }
+    /* County channel not found — fall through to facility fallback */
+  }
+
+  // Fallback: send to the configured facility chat ID
+  const fallback = process.env.FACILITY_TELEGRAM_ID;
+  const isPlaceholder =
+    !fallback || fallback === "your_facility_chat_id" || fallback.trim() === "";
+
+  if (isPlaceholder) {
+    // No valid destination configured — log and skip silently
+    console.warn(
+      `[Notify] No valid FACILITY_TELEGRAM_ID set — alert ${alert.alert_id} logged only`,
+    );
+    return;
+  }
+
+  try {
+    await bot.api.sendMessage(fallback, text, {
+      parse_mode: "Markdown",
+      reply_markup: kb,
+    });
+  } catch (err) {
+    // Log but don't throw — caller should get 200, not 500
+    console.error(
+      `[Notify] Fallback dispatch failed for alert ${alert.alert_id}:`,
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 
@@ -909,6 +1020,37 @@ server.post(
     try {
       await dispatchOutbreakAlert(alert);
       return { delivered: true, type: "outbreak_alert" };
+    } catch (err: unknown) {
+      server.log.error(err);
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(500).send({ error: msg });
+    }
+  },
+);
+
+// General status message endpoint
+server.post(
+  "/notify/message",
+  async (
+    request: FastifyRequest<{
+      Body: {
+        chat_id: string | number;
+        text: string;
+        parse_mode?: "Markdown" | "HTML";
+        reply_markup?: any;
+      };
+    }>,
+    reply: FastifyReply,
+  ) => {
+    const { chat_id, text, parse_mode, reply_markup } = request.body;
+    if (!chat_id || !text)
+      return reply.status(400).send({ error: "chat_id and text required" });
+    try {
+      await bot.api.sendMessage(chat_id, text, {
+        parse_mode: parse_mode || "Markdown",
+        reply_markup,
+      });
+      return { delivered: true };
     } catch (err: unknown) {
       server.log.error(err);
       const msg = err instanceof Error ? err.message : String(err);

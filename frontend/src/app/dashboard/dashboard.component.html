@@ -110,24 +110,39 @@
       >
         <div class="session-monitor-header">
           <h4>Session: <code>{{ session.sessionId }}</code></h4>
-          <span class="state-badge" [style.background-color]="getStateColor(session.state) + '15'" [style.color]="getStateColor(session.state)">
-            {{ session.state }}
+          <span class="state-badge"
+            [style.background-color]="getStateColor(session.state) + '22'"
+            [style.color]="getStateColor(session.state)">
+            {{ getStateLabel(session.state) }}
           </span>
         </div>
 
         <div class="workflow-progress">
           <div class="progress-info">
-            <span class="lbl">Workflow Pipeline:</span>
-            <span class="pct">{{ getStateProgress(session.state) }}% complete</span>
+            <span class="lbl">Pipeline:</span>
+            <span class="pct">{{ getStateProgress(session.state) }}%</span>
           </div>
           <div class="progress-bar-track">
-            <div class="progress-bar-fill" [style.width.%]="getStateProgress(session.state)" [style.background-color]="getStateColor(session.state)"></div>
+            <div
+              class="progress-bar-fill"
+              [style.width.%]="getStateProgress(session.state)"
+              [style.background-color]="getStateColor(session.state)">
+            </div>
           </div>
+        </div>
+
+        <!-- Gate waiting notice -->
+        <div class="gate-waiting" *ngIf="session.state === 'CLARIFICATION_GATE'">
+          ❓ Waiting for CHV clarification:<br/>
+          <em>{{ session.data?.gate_data?.question || 'Additional details needed…' }}</em>
+        </div>
+        <div class="gate-waiting decision" *ngIf="session.state === 'DECISION_GATE'">
+          🔔 Awaiting CHV approval to dispatch referral
         </div>
 
         <div class="session-meta">
           <p><strong>Started:</strong> {{ session.timestamp | date: 'medium' }}</p>
-          <p *ngIf="session.error" class="error-msg">⚠️ Failed Step: {{ session.error }}</p>
+          <p *ngIf="session.error" class="error-msg">⚠️ {{ session.error }}</p>
         </div>
       </div>
     </div>

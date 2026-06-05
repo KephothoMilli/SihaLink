@@ -47,15 +47,20 @@ export class ApiService {
   // ENCOUNTER LIFECYCLE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /** Kick off the full encounter pipeline (audio → extract → geo → store → notify). */
+  /**
+   * Kick off the full encounter pipeline via the unified state-machine endpoint.
+   * Supports audio, text, and form payloads — the backend differentiates automatically.
+   */
   startEncounter(body: {
     session_id: string;
-    audio_base64: string;
+    audio_base64?: string;
+    form_data?: Record<string, any>;
+    telegram_payload?: Record<string, any>;
     latitude?: number;
     longitude?: number;
     chw_id?: string;
   }) {
-    return this.post('/tool/start_encounter', body);
+    return this.post('/encounter/start', body);
   }
 
   /** Poll the current state machine state for a session. */
@@ -63,9 +68,25 @@ export class ApiService {
     return this.get(`/encounter/${sessionId}/status`);
   }
 
-  /** CHV taps Confirm or Decline on the human-in-the-loop gate. */
+  /** CHV taps Confirm or Decline on the DECISION_GATE. */
   confirmEncounter(sessionId: string, confirmed: boolean) {
     return this.post(`/encounter/${sessionId}/confirm`, { confirmed });
+  }
+
+  /**
+   * Submit a clarification answer for a session paused at CLARIFICATION_GATE.
+   * Resolves the asyncio.Future in the state machine so the lifecycle continues.
+   */
+  clarifyEncounter(sessionId: string, answer: string) {
+    return this.post(`/encounter/${sessionId}/clarify`, { answer });
+  }
+
+  /**
+   * Unified gate-resolution for Telegram-style chat_id sessions.
+   * The backend matches the most recent tg-<chat_id>-<ts> session.
+   */
+  respondToGate(chatId: string, text: string, confirm?: boolean) {
+    return this.post('/encounter/respond', { chat_id: chatId, text, confirm });
   }
 
   // ── Individual tool endpoints ─────────────────────────────────────────────
@@ -353,6 +374,65 @@ export class ApiService {
     return this.get('/health/surveillance');
   }
 
+  healthContactTracing() {
+    return this.get('/health/contact_tracing');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CONTACT TRACING
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Initiate a contact trace for an encounter or outbreak cluster. */
+  traceContacts(body: {
+    encounter_id?: string;
+    alert_id?: string;
+    initiated_by?: string;
+  }) {
+    return this.post('/tool/trace_contacts', body);
+  }
+
+  /** Get full trace status with analytics histogram. */
+  getTraceStatus(traceId: string) {
+    return this.get(`/tool/trace_status/${encodeURIComponent(traceId)}`);
+  }
+
+  /** Update a contact's visit status. */
+  updateContactStatus(body: {
+    trace_id: string;
+    contact_id: string;
+    status: 'contacted' | 'assessed' | 'cleared' | 'confirmed';
+    new_encounter_id?: string;
+    notes?: string;
+    chw_id?: string;
+  }) {
+    return this.post('/tool/update_contact_status', body);
+  }
+
+  /** List active traces, optionally filtered by county/syndrome. */
+  getActiveTraces(
+    params: {
+      county?: string;
+      syndrome?: string;
+      limit?: number;
+    } = {},
+  ) {
+    const qs = new URLSearchParams();
+    if (params.county) qs.set('county', params.county);
+    if (params.syndrome) qs.set('syndrome', params.syndrome);
+    if (params.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return this.get(`/tool/active_traces${q ? '?' + q : ''}`);
+  }
+
+  /** Resolve a completed contact trace. */
+  resolveTrace(body: {
+    trace_id: string;
+    resolved_by?: string;
+    resolution_notes?: string;
+  }) {
+    return this.post('/tool/resolve_trace', body);
+  }
+
   // ═════════════════════════════════════════════════════════════════════════════
   // NOTIFICATIONS
   // ═════════════════════════════════════════════════════════════════════════════
@@ -395,5 +475,22 @@ export class ApiService {
   /** Get list of registered recipients */
   getRecipients() {
     return this.get('/notifications/recipients');
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // AGENT OBSERVABILITY (LOGS)
+  // ═════════════════════════════════════════════════════════════════════════════
+
+  /** Fetch recent agent decision-making logs */
+  getAgentLogs(sessionId?: string, limit: number = 50) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (sessionId) params.append('session_id', sessionId);
+    return this.get(`/swarm/agent_logs?${params.toString()}`);
+  }
+
+  /** Search agent logs using Atlas Vector Search */
+  searchAgentLogs(query: string, limit: number = 10) {
+    const params = new URLSearchParams({ query, limit: limit.toString() });
+    return this.get(`/swarm/agent_logs/search?${params.toString()}`);
   }
 }

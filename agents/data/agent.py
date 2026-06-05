@@ -557,6 +557,65 @@ def list_protocols(county: Optional[str] = None) -> dict:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# TOOL GROUP 7 — AGENT LOGS
+# ═════════════════════════════════════════════════════════════════════════════
+
+def insert_agent_log(agent_name: str, step: str, detail: str, level: str, session_id: str) -> dict:
+    """
+    Insert a vectorized agent decision log.
+    """
+    try:
+        inserted_id = _run(_get_client().insert_agent_log(agent_name, step, detail, level, session_id))
+        return {"inserted_id": inserted_id, "status": "stored"}
+    except Exception as exc:
+        logger.error("insert_agent_log failed: %s", exc)
+        return {"error": str(exc), "status": "failed"}
+
+def query_agent_logs(session_id: Optional[str] = None, limit: int = 50) -> dict:
+    """Fetch recent agent logs."""
+    try:
+        results = _get_client().query_agent_logs(session_id, limit)
+        return {"logs": results, "count": len(results)}
+    except Exception as exc:
+        logger.error("query_agent_logs failed: %s", exc)
+        return {"logs": [], "count": 0, "error": str(exc)}
+
+def search_agent_logs(query: str, limit: int = 10) -> dict:
+    """Semantic search over agent logs."""
+    try:
+        results = _get_client().search_agent_logs(query, limit)
+        return {"logs": results, "count": len(results)}
+    except Exception as exc:
+        logger.error("search_agent_logs failed: %s", exc)
+        return {"logs": [], "count": 0, "error": str(exc)}
+
+def search_encounters(query: str, county: Optional[str] = None, limit: int = 20) -> list:
+    """Atlas Search full-text search across encounter records."""
+    try:
+        return _run(_get_client().search_encounters(query, county, limit))
+    except Exception as exc:
+        logger.error("search_encounters failed: %s", exc)
+        return []
+
+def search_alerts(query: str, county: Optional[str] = None, status: str = "active", limit: int = 20) -> list:
+    """Atlas Search full-text search across outbreak alerts."""
+    try:
+        return _run(_get_client().search_alerts(query, county, status, limit))
+    except Exception as exc:
+        logger.error("search_alerts failed: %s", exc)
+        return []
+
+def vector_search_protocols(query: str, limit: int = 5) -> list:
+    """Semantic vector search across protocols."""
+    try:
+        return _run(_get_client().vector_search_protocols(query, limit))
+    except Exception as exc:
+        logger.error("vector_search_protocols failed: %s", exc)
+        return []
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # ADK root_agent
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -646,6 +705,10 @@ CRITICAL RULES:
         get_protocol,
         search_protocols,
         list_protocols,
+        # Agent Logs
+        insert_agent_log,
+        query_agent_logs,
+        search_agent_logs,
     ],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.0,       # Deterministic — this is a data layer, not creative

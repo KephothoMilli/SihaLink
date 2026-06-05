@@ -255,23 +255,27 @@ class SwarmController:
         self._task:    Optional[asyncio.Task] = None
 
         # Agent instances (set by initialise())
-        self.intake     = None
-        self.geo        = None
-        self.data       = None
-        self.notify     = None
-        self.surveillance = None
-        self.orchestrator = None
+        self.intake          = None
+        self.geo             = None
+        self.data            = None
+        self.notify          = None
+        self.surveillance    = None
+        self.orchestrator    = None
+        self.contact_tracing = None  # Contact Tracing Agent
 
         # Runtime state
         self.active_counties: Dict[str, Dict] = dict(KENYA_ACTIVE_COUNTIES)
         self.swarm_stats: Dict[str, Any] = {
-            "encounters_today": 0,
-            "alerts_dispatched": 0,
-            "protocols_formulated": 0,
-            "counties_monitored": len(KENYA_ACTIVE_COUNTIES),
+            "encounters_today":      0,
+            "alerts_dispatched":     0,
+            "protocols_formulated":  0,
+            "contacts_traced":       0,
+            "traces_active":         0,
+            "counties_monitored":    len(KENYA_ACTIVE_COUNTIES),
             "last_surveillance_run": None,
-            "last_baseline_update": None,
-            "swarm_started_at": None,
+            "last_baseline_update":  None,
+            "last_contact_scan":     None,
+            "swarm_started_at":      None,
         }
 
     @classmethod
@@ -280,14 +284,16 @@ class SwarmController:
             cls._instance = cls()
         return cls._instance
 
-    def initialise(self, intake, geo, data, notify, surveillance, orchestrator) -> None:
+    def initialise(self, intake, geo, data, notify, surveillance, orchestrator,
+                   contact_tracing=None) -> None:
         """Wire in all agent instances."""
-        self.intake       = intake
-        self.geo          = geo
-        self.data         = data
-        self.notify       = notify
-        self.surveillance = surveillance
-        self.orchestrator = orchestrator
+        self.intake          = intake
+        self.geo             = geo
+        self.data            = data
+        self.notify          = notify
+        self.surveillance    = surveillance
+        self.orchestrator    = orchestrator
+        self.contact_tracing = contact_tracing
         logger.info("[Swarm] 🐝 All agents wired into swarm controller")
 
     async def start(self) -> None:
@@ -324,7 +330,7 @@ class SwarmController:
         # When a new encounter is stored → run immediate surveillance check
         self.bus.subscribe("encounter.stored", self._on_encounter_stored)
 
-        # When an alert is detected → formulate protocol + notify
+        # When an alert is detected → formulate protocol + notify + trace contacts
         self.bus.subscribe("alert.detected", self._on_alert_detected)
 
         # When a silent pandemic signal fires → escalate
@@ -338,6 +344,9 @@ class SwarmController:
 
         # When a follow-up is overdue → send reminder
         self.bus.subscribe("followup.overdue", self._on_followup_overdue)
+
+        # Contact tracing events
+        self.bus.subscribe("contact_trace.contact_confirmed", self._on_contact_confirmed)
 
         # Log everything to the swarm audit trail
         self.bus.subscribe("*", self._audit_log)
@@ -377,7 +386,12 @@ class SwarmController:
             interval_seconds=24 * 3600,     # daily
             handler=self._run_chw_gap_check,
         )
-        logger.info("[Swarm] ⏰ %d scheduled tasks registered", 6)
+        self.scheduler.register(
+            "contact_trace_scan",
+            interval_seconds=24 * 3600,     # daily — scan for overdue contact visits
+            handler=self._run_contact_trace_scan,
+        )
+        logger.info("[Swarm] ⏰ %d scheduled tasks registered", 7)
 
     # ─────────────────────────────────────────────────────────────────
     # Scheduled task implementations
@@ -504,10 +518,12 @@ class SwarmController:
     # ─────────────────────────────────────────────────────────────────
 
     async def _on_encounter_stored(self, event: SwarmEvent) -> None:
-        """When an encounter is stored, immediately check for local outbreak signal."""
+        """When an encounter is stored, immediately check for local outbreak signal.
+        Also initiates contact tracing for RED-triage encounters."""
         encounter = event.payload
-        county = encounter.get("admin_hierarchy", {}).get("county")
-        coords = self.active_counties.get(county, {"lat": 0.0, "lng": 0.0})
+        county   = encounter.get("admin_hierarchy", {}).get("county")
+        coords   = self.active_counties.get(county, {"lat": 0.0, "lng": 0.0})
+
         if county and self.data and self.data.connected:
             try:
                 from agents.surveillance.agent import run_outbreak_detection
@@ -520,17 +536,41 @@ class SwarmController:
             except Exception as exc:
                 logger.error("[Swarm] Post-encounter surveillance failed: %s", exc)
 
+        # Auto-initiate contact tracing for RED-triage encounters
+        triage       = encounter.get("extracted", {}).get("triage_color", "GREEN")
+        encounter_id = encounter.get("encounter_id") or encounter.get("session_id")
+        if triage == "RED" and encounter_id and self.contact_tracing:
+            try:
+                result = self.contact_tracing.initiate_trace(encounter_id)
+                contacts_found = result.get("contacts_identified", 0)
+                self.swarm_stats["contacts_traced"] = (
+                    self.swarm_stats.get("contacts_traced", 0) + contacts_found
+                )
+                logger.info(
+                    "[Swarm] 🔍 Contact trace %s: %d contacts for RED encounter %s",
+                    result.get("trace_id"), contacts_found, encounter_id,
+                )
+                await self.bus.publish(SwarmEvent(
+                    "contact_trace.initiated",
+                    result,
+                    source="contact_tracing_agent",
+                ))
+            except Exception as exc:
+                logger.error("[Swarm] Contact trace failed for encounter %s: %s",
+                             encounter_id, exc)
+
     async def _on_alert_detected(self, event: SwarmEvent) -> None:
-        """Auto-formulate protocol and notify district officer."""
-        alert = event.payload
+        """Auto-formulate protocol, notify district officer, and trace outbreak contacts."""
+        alert    = event.payload
         syndrome = alert.get("syndrome", "unknown")
         county   = alert.get("location", {}).get("county", "unknown")
+        alert_id = alert.get("alert_id", "")
         logger.warning("[Swarm] 🚨 ALERT: %s in %s", syndrome.upper(), county)
 
         # 1. Auto-formulate response protocol
         try:
             from agents.surveillance.agent import formulate_response_protocol
-            protocol = formulate_response_protocol(
+            formulate_response_protocol(
                 syndrome, county, alert.get("alert_type", "YELLOW").upper()
             )
             self.swarm_stats["protocols_formulated"] += 1
@@ -546,6 +586,30 @@ class SwarmController:
                 logger.info("[Swarm] 📱 Alert dispatched to Telegram")
             except Exception as exc:
                 logger.warning("[Swarm] Telegram dispatch failed: %s", exc)
+
+        # 3. Trace contacts for the whole outbreak cluster
+        if self.contact_tracing and alert_id and alert.get("encounter_ids"):
+            try:
+                result = self.contact_tracing.trace_cluster(alert_id)
+                total_contacts = result.get("total_contacts", 0)
+                self.swarm_stats["contacts_traced"] = (
+                    self.swarm_stats.get("contacts_traced", 0) + total_contacts
+                )
+                self.swarm_stats["traces_active"] = (
+                    self.swarm_stats.get("traces_active", 0) + result.get("traces_created", 0)
+                )
+                logger.info(
+                    "[Swarm] 🔗 Cluster trace for %s: %d traces, %d contacts",
+                    alert_id, result.get("traces_created", 0), total_contacts,
+                )
+                await self.bus.publish(SwarmEvent(
+                    "contact_trace.initiated",
+                    {"alert_id": alert_id, **result},
+                    source="contact_tracing_agent",
+                ))
+            except Exception as exc:
+                logger.error("[Swarm] Cluster contact trace failed for alert %s: %s",
+                             alert_id, exc)
 
     async def _on_silent_pandemic(self, event: SwarmEvent) -> None:
         """Silent pandemic signal — formulate protocol, escalate to district."""
@@ -645,6 +709,68 @@ class SwarmController:
         if not event.topic.startswith("task."):  # skip noisy scheduler ticks
             logger.info("[Audit] %s | source=%s | ts=%s",
                         event.topic, event.source, event.ts)
+
+    async def _on_contact_confirmed(self, event: SwarmEvent) -> None:
+        """A contact was confirmed as a new case — initiate a secondary trace."""
+        payload      = event.payload
+        new_enc_id   = payload.get("new_encounter_id")
+        parent_trace = payload.get("trace_id")
+        if not new_enc_id or not self.contact_tracing:
+            return
+        try:
+            result = self.contact_tracing.initiate_trace(
+                new_enc_id,
+                initiated_by=f"contact_trace_{parent_trace}",
+            )
+            logger.warning(
+                "[Swarm] 🔗 Secondary trace %s from confirmed contact in trace %s",
+                result.get("trace_id"), parent_trace,
+            )
+            self.swarm_stats["contacts_traced"] = (
+                self.swarm_stats.get("contacts_traced", 0)
+                + result.get("contacts_identified", 0)
+            )
+        except Exception as exc:
+            logger.error("[Swarm] Secondary contact trace failed: %s", exc)
+
+    async def _run_contact_trace_scan(self) -> None:
+        """Daily scan for overdue contact visit tasks.
+        Escalates unvisited household contacts and re-notifies assigned CHWs."""
+        logger.info("[Swarm] 🔍 Scanning for overdue contact trace visits")
+        if not self.contact_tracing:
+            logger.debug("[Swarm] Contact Tracing Agent not initialised — skipping scan")
+            return
+        try:
+            result  = self.contact_tracing.scan_overdue(hours=24)
+            overdue = result.get("escalated_count", 0)
+            self.swarm_stats["last_contact_scan"] = datetime.utcnow().isoformat()
+            if overdue > 0:
+                logger.warning("[Swarm] ⚠️  %d overdue contact visits across %d traces",
+                               overdue, result.get("traces_affected", 0))
+                # Notify district officers for each affected trace
+                if self.notify:
+                    for trace_id in result.get("trace_ids", [])[:5]:  # cap at 5 per cycle
+                        try:
+                            await self.notify.dispatch_outbreak_alert({
+                                "alert_id":   f"ct-overdue-{trace_id}",
+                                "syndrome":   "contact_trace_overdue",
+                                "location":   {"county": "Multiple", "ward": "Multiple"},
+                                "count":      overdue,
+                                "percent_above_baseline": 0,
+                                "detected_at": datetime.utcnow().isoformat(),
+                                "status":     "active",
+                                "recommended_actions": [
+                                    f"Contact trace {trace_id} has {overdue} unvisited contacts",
+                                    "Deploy supervisor to verify CHW assignments",
+                                    "Re-assign unvisited contacts to available CHWs",
+                                ],
+                            })
+                        except Exception as exc:
+                            logger.warning("[Swarm] Overdue trace notify failed: %s", exc)
+            else:
+                logger.info("[Swarm] ✅ All contact visits on schedule")
+        except Exception as exc:
+            logger.error("[Swarm] Contact trace scan failed: %s", exc)
 
     # ─────────────────────────────────────────────────────────────────
     # Public API — called by HTTP routes and Telegram bot

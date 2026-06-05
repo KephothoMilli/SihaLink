@@ -46,6 +46,13 @@ export const routes: Routes = [
           ),
       },
       {
+        path: 'contact-tracing',
+        loadComponent: () =>
+          import('../app/agents-ui/contact-tracing-agent/contact-tracing-agent.component').then(
+            (m) => m.ContactTracingAgentComponent,
+          ),
+      },
+      {
         path: '',
         redirectTo: 'intake',
         pathMatch: 'full',

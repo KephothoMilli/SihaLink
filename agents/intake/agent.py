@@ -39,10 +39,15 @@ logger = logging.getLogger("SihaLink-Intake")
 # WHO IDSR Syndrome Categories
 # ---------------------------------------------------------------------------
 IDSR_SYNDROMES = [
+    # ── Core WHO IDSR categories ──────────────────────────────────────────────
     "acute_watery_diarrhea", "acute_bloody_diarrhea", "acute_febrile_illness",
     "acute_respiratory_infection", "acute_rash_with_fever", "malnutrition_severe",
     "neonatal_tetanus", "meningitis", "viral_hemorrhagic_fever",
-    "cholera", "measles", "unknown",
+    "cholera", "measles",
+    # ── Additional high-priority diseases ────────────────────────────────────
+    "malaria", "tuberculosis", "pneumonia", "typhoid", "dengue",
+    "yellow_fever", "ebola", "covid_19", "poliomyelitis", "hiv_aids",
+    "unknown",
 ]
 
 
@@ -60,6 +65,10 @@ class IntakeSource(str, Enum):
 # Progress logger — emits structured log lines the frontend/Telegram can stream
 # ---------------------------------------------------------------------------
 
+import concurrent.futures
+
+_log_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
 def _log(session_id: str, step: str, detail: str, level: str = "INFO") -> None:
     """Emit a structured progress log line visible to callers."""
     icons = {
@@ -70,6 +79,14 @@ def _log(session_id: str, step: str, detail: str, level: str = "INFO") -> None:
     }
     icon = icons.get(level, "🔵")
     logger.info("[%s] %s [%s] %s", session_id[:8], icon, step, detail)
+    
+    try:
+        from agents.data.agent import insert_agent_log
+        _log_executor.submit(
+            insert_agent_log, "Intake Agent", step, detail, level, session_id
+        )
+    except Exception as exc:
+        logger.debug("Background log persist failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +142,8 @@ def extract_from_form(form_data: dict, session_id: str) -> dict:
     description = (
         f"Chief complaint: {translated_complaint}. "
         f"Symptoms: {', '.join(symptoms_list) if symptoms_list else 'none listed'}. "
-        f"Duration: {form_data.get('duration_days', '?')} days."
+        f"Duration: {form_data.get('duration_days', '?')} days. "
+        f"Patient Contacts: {form_data.get('patient_contacts', 'none listed')}."
     )
 
     _log(session_id, "EXTRACTION", "🧠 Running clinical extraction on form data...")
@@ -444,11 +462,14 @@ def clarify_extraction(
     )
 
     try:
-        from google import generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("gemini-flash-latest")
-        resp = model.generate_content(prompt)
-        updated = _parse_clinical_json(getattr(resp, "text", str(resp)))
+        from google import genai
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        raw = getattr(resp, "text", str(resp))
+        updated = _parse_clinical_json(raw)
         updated["clarification_needed"]   = False
         updated["clarification_question"] = None
         updated["clarification_answer"]   = english_answer
@@ -774,12 +795,14 @@ def _extract_from_text(english_text: str, session_id: str) -> Dict[str, Any]:
         return _mock_extraction()
 
     try:
-        from google import generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-flash-latest")
+        from google import genai
+        client = genai.Client(api_key=api_key)
         prompt = _build_text_extraction_prompt(english_text)
         _log(session_id, "EXTRACTION", "Calling Gemini for clinical extraction...")
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         raw = getattr(resp, "text", str(resp))
         result = _parse_clinical_json(raw)
         _log(session_id, "EXTRACTION",
@@ -802,15 +825,18 @@ def _extract_from_audio(audio_base64: str, session_id: str) -> Dict[str, Any]:
 
     try:
         audio_bytes = base64.b64decode(audio_base64)
-        from google import generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-flash-latest")
+        from google import genai
+        from google.genai import types as genai_t
+        client = genai.Client(api_key=api_key)
         prompt = _build_audio_extraction_prompt()
         _log(session_id, "EXTRACTION", "Calling Gemini multimodal for audio extraction...")
-        resp = model.generate_content([
-            prompt,
-            {"mime_type": "audio/wav", "data": audio_bytes},
-        ])
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                prompt,
+                genai_t.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+            ],
+        )
         raw = getattr(resp, "text", str(resp))
         return _parse_clinical_json(raw)
     except Exception as exc:
@@ -828,19 +854,22 @@ def _transcribe_audio(audio_base64: str, session_id: str) -> Optional[str]:
         return None
     try:
         audio_bytes = base64.b64decode(audio_base64)
-        from google import generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-flash-latest")
+        from google import genai
+        from google.genai import types as genai_t
+        client = genai.Client(api_key=api_key)
         prompt = (
             "Transcribe this audio recording from a Community Health Volunteer in Kenya. "
             "The audio may be in Dholuo, Swahili, Kikuyu, Somali, Luhya, Kamba, Mijikenda, "
             "Meru, Turkana, Kalenjin, or English. Output only the transcript text, "
             "preserving the original language. No translation, no explanation."
         )
-        resp = model.generate_content([
-            prompt,
-            {"mime_type": "audio/wav", "data": audio_bytes},
-        ])
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                prompt,
+                genai_t.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+            ],
+        )
         transcript = getattr(resp, "text", "").strip()
         _log(session_id, "AUDIO", f"Transcript ({len(transcript)} chars): '{transcript[:60]}'")
         return transcript if transcript else None
@@ -894,6 +923,7 @@ Return ONLY valid JSON, no markdown:
   "duration_days": 0,
   "vital_signs": {{"temperature_c": 0, "respiratory_rate": 0}},
   "danger_signs": [],
+  "patient_contacts": [{{"name": "string", "relation": "string"}}],
   "confidence": 0.0,
   "clarification_needed": false,
   "clarification_question": null
@@ -968,6 +998,7 @@ def _mock_extraction() -> Dict[str, Any]:
         "duration_days": 2,
         "vital_signs": {"temperature_c": 38.2, "respiratory_rate": 28},
         "danger_signs": [],
+        "patient_contacts": [],
         "confidence": 0.85,
         "clarification_needed": False,
         "clarification_question": None,

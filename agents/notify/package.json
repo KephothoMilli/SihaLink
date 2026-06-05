@@ -4,24 +4,26 @@
   "description": "SihaLink Telegram notification agent using grammY",
   "main": "dist/bot.js",
   "scripts": {
-    "dev": "ts-node --esm bot.ts",
-    "build": "tsc",
-    "start": "node dist/bot.js"
+    "dev": "tsx --env-file=../../.env bot.ts",
+    "build": "tsc --outDir dist --noEmit false",
+    "start": "node dist/bot.js",
+    "start:dev": "tsx --env-file=../../.env bot.ts"
   },
   "dependencies": {
     "@grammyjs/conversations": "^1.2.0",
     "@opentelemetry/api": "^1.7.0",
     "@opentelemetry/auto-instrumentations-node": "^0.42.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.48.0",
-    "@opentelemetry/resources": "^1.21.0",
+    "@opentelemetry/resources": "^1.30.1",
     "@opentelemetry/sdk-node": "^0.48.0",
-    "@opentelemetry/semantic-conventions": "^1.21.0",
+    "@opentelemetry/semantic-conventions": "^1.41.1",
     "fastify": "^4.28.1",
     "grammy": "^1.30.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
     "typescript": "^5.6.3"
   }
 }

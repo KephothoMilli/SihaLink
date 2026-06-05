@@ -28,6 +28,7 @@ export interface FormIntakeRequest {
   syndrome_hint?: string;
   language_hint?: string;
   county?: string;
+  patient_contacts?: string;
 }
 
 export interface TelegramIntakeRequest {
