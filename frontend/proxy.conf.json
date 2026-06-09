@@ -9,6 +9,11 @@
     "secure": false,
     "changeOrigin": true
   },
+  "/encounters": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
   "/health": {
     "target": "http://localhost:8000",
     "secure": false,
@@ -22,7 +27,8 @@
   "/swarm": {
     "target": "http://localhost:8000",
     "secure": false,
-    "changeOrigin": true
+    "changeOrigin": true,
+    "ws": true
   },
   "/surveillance": {
     "target": "http://localhost:8000",
@@ -35,6 +41,11 @@
     "changeOrigin": true
   },
   "/notifications": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/workflows": {
     "target": "http://localhost:8000",
     "secure": false,
     "changeOrigin": true

@@ -796,7 +796,7 @@ def _assign_chws_and_schedule(
 
 root_agent = LlmAgent(
     name="contact_tracing_agent",
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     description=(
         "SihaLink Contact Tracing Agent. Identifies and tracks all persons exposed to "
         "confirmed or suspected disease cases. Pulls encounter, alert, CHW, and follow-up "

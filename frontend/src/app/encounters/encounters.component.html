@@ -1,86 +1,462 @@
-<!-- Encounters Component Template -->
+<!-- Encounters Component — Live sessions + Persisted MongoDB records -->
 
 <div class="encounters-container">
-  <div class="page-header animate-fade-in">
-    <h2>Processed Case Encounters Log</h2>
-    <p>Chronological registry of clinical encounters ingested and enriched by the swarm agents.</p>
+  <div class="page-header">
+    <h2>Case Encounters Log</h2>
+    <p>Live pipeline sessions and all encounters persisted in MongoDB Atlas.</p>
   </div>
 
-  <div class="encounters-list animate-fade-in" *ngIf="encounters.length > 0">
-    <div class="encounter-item-card animate-fade-in" *ngFor="let encounter of encounters">
-      <div class="encounter-card-header">
-        <div class="session-info">
-          <span class="pulse-indicator-dot" [style.background-color]="getStateColor(encounter.state)"></span>
-          <h3>Case ID: <code>{{ encounter.sessionId }}</code></h3>
+  <!-- View toggle -->
+  <div class="tab-bar">
+    <button class="tab-btn" [class.active]="activeView === 'persisted'" (click)="activeView = 'persisted'">
+      💾 MongoDB Encounters <span class="tab-count">{{ persistedTotal }}</span>
+    </button>
+    <button class="tab-btn" [class.active]="activeView === 'live'" (click)="activeView = 'live'">
+      🔴 Live Sessions <span class="tab-count">{{ liveSessions.length }}</span>
+    </button>
+  </div>
+
+  <!-- ── PERSISTED ENCOUNTERS TAB ─────────────────────────────── -->
+  @if (activeView === 'persisted') {
+
+  <!-- Filters -->
+  <div class="filter-bar">
+    <input type="text" [(ngModel)]="filterCounty" placeholder="County (e.g. Kisumu)" class="filter-input" />
+    <input type="text" [(ngModel)]="filterSyndrome" placeholder="Syndrome (e.g. cholera)" class="filter-input" />
+    <select [(ngModel)]="filterTriage" class="filter-select">
+      <option value="">All Triage</option>
+      <option value="RED">🔴 RED</option>
+      <option value="YELLOW">🟡 YELLOW</option>
+      <option value="GREEN">🟢 GREEN</option>
+    </select>
+    <select [(ngModel)]="filterLimit" class="filter-select">
+      <option [value]="20">20 per page</option>
+      <option [value]="50">50 per page</option>
+      <option [value]="100">100 per page</option>
+    </select>
+    <button class="btn-filter" (click)="applyFilters()">🔍 Filter</button>
+    <button class="btn-clear" (click)="clearFilters()">✕ Clear</button>
+  </div>
+
+  @if (persistedLoading) {
+  <div class="loading-bar">
+    <div class="loading-fill"></div>
+  </div>
+  }
+
+  @if (persistedError) {
+  <div class="error-banner">⚠️ {{ persistedError }}</div>
+  }
+
+  @if (persistedTotal > 0) {
+  <p class="result-count">Showing {{ persistedEncounters.length }} of {{ persistedTotal }} encounters</p>
+  }
+
+  @if (persistedEncounters.length === 0 && !persistedLoading) {
+  <div class="empty-card">
+    <p>No encounters found. Run <code>python data/seed_test_data.py</code> to populate test data.</p>
+  </div>
+  }
+
+  <div class="encounters-list">
+    @for (enc of persistedEncounters; track enc.encounter_id) {
+
+    <!-- Encounter card -->
+    <div class="encounter-card animate-fade-in" [style.border-left-color]="triageColor(enc.extracted?.triage_color)"
+      [class.card-expanded]="isExpanded(enc)">
+
+      <div class="encounter-header">
+        <div class="header-left">
+          <span class="triage-badge" [style.background]="triageColor(enc.extracted?.triage_color) + '20'"
+            [style.color]="triageColor(enc.extracted?.triage_color)">
+            {{ enc.extracted?.triage_color || '—' }}
+          </span>
+          <span class="syndrome-label">{{ formatSyndrome(enc.extracted?.syndrome) }}</span>
         </div>
-        <span class="state-outline-badge" [style.color]="getStateColor(encounter.state)" [style.border-color]="getStateColor(encounter.state) + '30'" [style.background-color]="getStateColor(encounter.state) + '05'">
-          {{ encounter.state }}
+        <span class="enc-id">{{ enc.encounter_id }}</span>
+      </div>
+
+      <!-- Summary row (always visible) -->
+      <div class="encounter-body">
+        <div class="detail-row">
+          <span class="lbl">📍 Location</span>
+          <span>{{ enc.admin_hierarchy?.ward }}, {{ enc.admin_hierarchy?.county }}</span>
+        </div>
+        @if (enc.extracted?.chief_complaint) {
+        <div class="detail-row">
+          <span class="lbl">🩺 Complaint</span>
+          <span>{{ enc.extracted.chief_complaint }}</span>
+        </div>
+        }
+        <div class="detail-row">
+          <span class="lbl">👤 Patient</span>
+          <span>
+            {{ enc.extracted?.age?.value }}{{ enc.extracted?.age?.unit ? ' ' + enc.extracted.age.unit : '' }}
+            {{ enc.extracted?.sex || '' }}
+          </span>
+        </div>
+        @if (enc.extracted?.symptoms?.length) {
+        <div class="detail-row">
+          <span class="lbl">🔬 Symptoms</span>
+          <span class="symptom-chips">
+            @for (s of enc.extracted.symptoms.slice(0,4); track s) {
+            <span class="chip">{{ s }}</span>
+            }
+            @if (enc.extracted.symptoms.length > 4) {
+            <span class="chip chip-more">+{{ enc.extracted.symptoms.length - 4 }} more</span>
+            }
+          </span>
+        </div>
+        }
+        <div class="detail-row">
+          <span class="lbl">👷 CHW</span>
+          <span>{{ enc.chw_id }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="lbl">🕒 Timestamp</span>
+          <span>{{ enc.timestamp | date:'dd MMM yyyy HH:mm' }}</span>
+        </div>
+      </div>
+
+      <!-- Card footer — View Details button -->
+      <div class="encounter-footer">
+        <button class="btn-view-detail" (click)="toggleDetail(enc)">
+          @if (isExpanded(enc)) {
+          ▲ Hide Details
+          } @else {
+          🔍 View Details
+          }
+        </button>
+      </div>
+
+      <!-- ── INLINE DETAIL PANEL ─────────────────────────────── -->
+      @if (isExpanded(enc)) {
+      <div class="detail-panel animate-expand">
+
+        @if (detailLoading) {
+        <div class="detail-loading">
+          <div class="loading-bar">
+            <div class="loading-fill"></div>
+          </div>
+          <p>Loading full encounter data…</p>
+        </div>
+        }
+
+        @if (!detailLoading && detailEncounter) {
+        <div class="detail-sections">
+
+          <!-- ── Clinical Section ── -->
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">🩺</span>
+              <h4>Clinical Assessment</h4>
+            </div>
+            <div class="section-grid">
+              <div class="section-field">
+                <span class="field-label">Syndrome</span>
+                <span class="field-value capitalize">{{ formatSyndrome(detailEncounter.extracted?.syndrome) }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Triage Color</span>
+                <span class="triage-badge-sm"
+                  [style.background]="triageColor(detailEncounter.extracted?.triage_color) + '20'"
+                  [style.color]="triageColor(detailEncounter.extracted?.triage_color)">
+                  {{ detailEncounter.extracted?.triage_color || '—' }}
+                </span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Language</span>
+                <span class="field-value">{{ detailEncounter.extracted?.language || '—' }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">AI Confidence</span>
+                <span class="field-value">
+                  @if (detailEncounter.extracted?.confidence) {
+                  {{ (detailEncounter.extracted.confidence * 100).toFixed(0) }}%
+                  } @else { — }
+                </span>
+              </div>
+              <div class="section-field full-span">
+                <span class="field-label">Chief Complaint</span>
+                <span class="field-value">{{ detailEncounter.extracted?.chief_complaint || '—' }}</span>
+              </div>
+              @if (detailEncounter.extracted?.symptoms?.length) {
+              <div class="section-field full-span">
+                <span class="field-label">All Symptoms</span>
+                <div class="symptom-chips">
+                  @for (s of detailEncounter.extracted.symptoms; track s) {
+                  <span class="chip">{{ s }}</span>
+                  }
+                </div>
+              </div>
+              }
+              @if (detailEncounter.extracted?.danger_signs?.length) {
+              <div class="section-field full-span">
+                <span class="field-label">⚠️ Danger Signs</span>
+                <div class="symptom-chips">
+                  @for (d of detailEncounter.extracted.danger_signs; track d) {
+                  <span class="chip chip-danger">{{ d }}</span>
+                  }
+                </div>
+              </div>
+              }
+            </div>
+          </div>
+
+          <!-- ── Vitals Section ── -->
+          @if (detailEncounter.extracted?.vitals) {
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">💗</span>
+              <h4>Vital Signs</h4>
+            </div>
+            <div class="vitals-grid">
+              @if (detailEncounter.extracted.vitals.temperature) {
+              <div class="vital-card">
+                <span class="vital-icon">🌡️</span>
+                <span class="vital-val">{{ detailEncounter.extracted.vitals.temperature }}°C</span>
+                <span class="vital-lbl">Temperature</span>
+              </div>
+              }
+              @if (detailEncounter.extracted.vitals.blood_pressure) {
+              <div class="vital-card">
+                <span class="vital-icon">🩸</span>
+                <span class="vital-val">{{ detailEncounter.extracted.vitals.blood_pressure }}</span>
+                <span class="vital-lbl">Blood Pressure</span>
+              </div>
+              }
+              @if (detailEncounter.extracted.vitals.pulse) {
+              <div class="vital-card">
+                <span class="vital-icon">❤️</span>
+                <span class="vital-val">{{ detailEncounter.extracted.vitals.pulse }} bpm</span>
+                <span class="vital-lbl">Pulse</span>
+              </div>
+              }
+              @if (detailEncounter.extracted.vitals.spo2) {
+              <div class="vital-card">
+                <span class="vital-icon">💨</span>
+                <span class="vital-val">{{ detailEncounter.extracted.vitals.spo2 }}%</span>
+                <span class="vital-lbl">SpO₂</span>
+              </div>
+              }
+              @if (detailEncounter.extracted.vitals.respiratory_rate) {
+              <div class="vital-card">
+                <span class="vital-icon">🫁</span>
+                <span class="vital-val">{{ detailEncounter.extracted.vitals.respiratory_rate }}/min</span>
+                <span class="vital-lbl">Resp. Rate</span>
+              </div>
+              }
+              @if (detailEncounter.extracted.vitals.muac) {
+              <div class="vital-card">
+                <span class="vital-icon">📏</span>
+                <span class="vital-val">{{ detailEncounter.extracted.vitals.muac }} cm</span>
+                <span class="vital-lbl">MUAC</span>
+              </div>
+              }
+            </div>
+          </div>
+          }
+
+          <!-- ── Patient Section ── -->
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">👤</span>
+              <h4>Patient Demographics</h4>
+            </div>
+            <div class="section-grid">
+              <div class="section-field">
+                <span class="field-label">Age</span>
+                <span class="field-value">
+                  {{ detailEncounter.extracted?.age?.value }}
+                  {{ detailEncounter.extracted?.age?.unit || '' }}
+                </span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Sex</span>
+                <span class="field-value">{{ detailEncounter.extracted?.sex || '—' }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">CHW ID</span>
+                <span class="field-value mono">{{ detailEncounter.chw_id }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Source</span>
+                <span class="field-value">{{ detailEncounter.extracted?.source || 'CHW report' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Geographic Section ── -->
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">📍</span>
+              <h4>Geographic Enrichment</h4>
+            </div>
+            <div class="section-grid">
+              <div class="section-field">
+                <span class="field-label">County</span>
+                <span class="field-value">{{ detailEncounter.admin_hierarchy?.county || '—' }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Sub-County</span>
+                <span class="field-value">{{ detailEncounter.admin_hierarchy?.sub_county || '—' }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Ward</span>
+                <span class="field-value">{{ detailEncounter.admin_hierarchy?.ward || '—' }}</span>
+              </div>
+              <div class="section-field">
+                <span class="field-label">Village</span>
+                <span class="field-value">{{ detailEncounter.admin_hierarchy?.village || '—' }}</span>
+              </div>
+              @if (detailEncounter.gps?.lat) {
+              <div class="section-field">
+                <span class="field-label">GPS</span>
+                <span class="field-value mono">{{ detailEncounter.gps?.lat?.toFixed(5) }}, {{
+                  detailEncounter.gps?.lng?.toFixed(5) }}</span>
+              </div>
+              }
+            </div>
+          </div>
+
+          <!-- ── Nearest Facilities Section ── -->
+          @if (detailEncounter.nearest_facilities?.length) {
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">🏥</span>
+              <h4>Nearest Facilities</h4>
+            </div>
+            <div class="facilities-list">
+              @for (f of detailEncounter.nearest_facilities; track f.name; let i = $index) {
+              <div class="facility-row" [class.facility-top]="i === 0">
+                <div class="facility-rank">{{ i + 1 }}</div>
+                <div class="facility-info">
+                  <span class="facility-name">{{ f.name }}</span>
+                  <span class="facility-type">{{ f.type || f.facility_type || '' }}</span>
+                </div>
+                <div class="facility-meta">
+                  @if (f.distance_km) {
+                  <span class="facility-dist">📍 {{ f.distance_km?.toFixed(1) }} km</span>
+                  }
+                  @if (f.eta_minutes) {
+                  <span class="facility-eta">🕒 {{ facilityEta(f.eta_minutes) }}</span>
+                  }
+                </div>
+              </div>
+              }
+            </div>
+          </div>
+          }
+
+          <!-- ── CHW Notes Section ── -->
+          @if (detailEncounter.extracted?.notes || detailEncounter.notes) {
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">📝</span>
+              <h4>CHW Notes</h4>
+            </div>
+            <p class="notes-text">{{ detailEncounter.extracted?.notes || detailEncounter.notes }}</p>
+          </div>
+          }
+
+          <!-- ── Referral / Alert flags ── -->
+          @if (detailEncounter.alert_needed || detailEncounter.referral_id) {
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-icon">🚨</span>
+              <h4>Referral &amp; Alert</h4>
+            </div>
+            <div class="section-grid">
+              @if (detailEncounter.referral_id) {
+              <div class="section-field">
+                <span class="field-label">Referral ID</span>
+                <span class="field-value mono">{{ detailEncounter.referral_id }}</span>
+              </div>
+              }
+              @if (detailEncounter.alert_needed !== undefined) {
+              <div class="section-field">
+                <span class="field-label">Alert Needed</span>
+                <span class="field-value" [style.color]="detailEncounter.alert_needed ? '#d32f2f' : '#388e3c'">
+                  {{ detailEncounter.alert_needed ? '🚨 Yes' : '✅ No' }}
+                </span>
+              </div>
+              }
+              @if (detailEncounter.recommended_facility?.name) {
+              <div class="section-field full-span">
+                <span class="field-label">Recommended Facility</span>
+                <span class="field-value">{{ detailEncounter.recommended_facility.name }}</span>
+              </div>
+              }
+            </div>
+          </div>
+          }
+
+        </div>
+        }
+      </div>
+      }
+
+    </div>
+    }
+  </div>
+  }
+
+  <!-- ── LIVE SESSIONS TAB ──────────────────────────────────────── -->
+  @if (activeView === 'live') {
+  @if (liveSessions.length === 0) {
+  <div class="empty-card">
+    <p>No live sessions active. Submit a new encounter via the Intake Agent or Telegram bot.</p>
+  </div>
+  }
+
+  <div class="encounters-list">
+    @for (session of liveSessions; track session.sessionId) {
+    <div class="encounter-card" [style.border-left-color]="getStateColor(session.state)">
+      <div class="encounter-header">
+        <div class="header-left">
+          <h3>Session: <code>{{ session.sessionId }}</code></h3>
+        </div>
+        <span class="state-badge" [style.color]="getStateColor(session.state)"
+          [style.border-color]="getStateColor(session.state)">
+          {{ session.state }}
         </span>
       </div>
 
-      <div class="encounter-card-body">
-        <p class="timestamp">🕒 <strong>Registered:</strong> {{ encounter.timestamp | date: 'medium' }}</p>
-        <p *ngIf="encounter.error" class="error-banner">⚠️ Failed pipeline step: {{ encounter.error }}</p>
-
-        <!-- Dynamic Grid of agent enrichment -->
-        <div class="enrichment-grid">
-          <!-- Step 1: Intake -->
-          <div class="enrich-column" *ngIf="encounter.data.extraction">
-            <div class="col-header">
-              <span class="icon">🎤</span>
-              <h4>Intake Agent</h4>
-            </div>
-            <div class="col-body">
-              <p *ngIf="encounter.data.extraction.symptoms">
-                <strong>Symptoms:</strong>
-                <span class="tag-mini" *ngFor="let s of encounter.data.extraction.symptoms">{{ s }}</span>
-              </p>
-              <p *ngIf="encounter.data.extraction.clinical_assessment" class="assessment-txt">
-                <strong>Assessment:</strong> {{ encounter.data.extraction.clinical_assessment }}
-              </p>
-            </div>
-          </div>
-
-          <!-- Step 2: Geo -->
-          <div class="enrich-column" *ngIf="encounter.data.geoEnriched">
-            <div class="col-header">
-              <span class="icon">📍</span>
-              <h4>Geo Agent</h4>
-            </div>
-            <div class="col-body">
-              <p *ngIf="encounter.data.geoEnriched.admin_hierarchy">
-                <strong>Location Center:</strong> 
-                {{ encounter.data.geoEnriched.admin_hierarchy.ward || 'Unknown' }} Ward, 
-                {{ encounter.data.geoEnriched.admin_hierarchy.county || 'Unknown' }} County
-              </p>
-              <p *ngIf="encounter.data.geoEnriched.recommended_facility">
-                <strong>Referral Hospital:</strong> 🏥 {{ encounter.data.geoEnriched.recommended_facility.name }}
-              </p>
-            </div>
-          </div>
-
-          <!-- Step 3: Notify -->
-          <div class="enrich-column" *ngIf="encounter.data.notifications && encounter.data.notifications.length > 0">
-            <div class="col-header">
-              <span class="icon">📨</span>
-              <h4>Notify Agent</h4>
-            </div>
-            <div class="col-body">
-              <p class="notify-count">✓ {{ encounter.data.notifications.length }} alert(s) dispatched to local clinic networks</p>
-            </div>
-          </div>
+      <div class="encounter-body">
+        <div class="detail-row">
+          <span class="lbl">🕒 Started</span>
+          <span>{{ session.timestamp | date:'medium' }}</span>
         </div>
+        @if (session.error) {
+        <div class="error-banner">⚠️ {{ session.error }}</div>
+        }
+        @if (session.state === 'DECISION_GATE') {
+        <div class="gate-notice">🔔 Awaiting CHV approval to dispatch referral</div>
+        }
+        @if (session.data?.extraction?.symptoms?.length) {
+        <div class="detail-row">
+          <span class="lbl">🔬 Symptoms</span>
+          <span class="symptom-chips">
+            @for (s of session.data.extraction.symptoms; track s) {
+            <span class="chip">{{ s }}</span>
+            }
+          </span>
+        </div>
+        }
+        @if (session.data?.geoEnriched?.admin_hierarchy) {
+        <div class="detail-row">
+          <span class="lbl">📍 Location</span>
+          <span>{{ session.data.geoEnriched.admin_hierarchy.ward }}, {{ session.data.geoEnriched.admin_hierarchy.county
+            }}</span>
+        </div>
+        }
       </div>
 
-      <div class="encounter-card-footer">
-        <button (click)="clearSession(encounter.sessionId)" class="btn btn-delete-log">
-          🗑️ Remove Case Log
-        </button>
+      <div class="encounter-footer">
+        <button (click)="clearSession(session.sessionId)" class="btn-remove">🗑️ Remove</button>
       </div>
     </div>
+    }
   </div>
-
-  <div class="empty-encounters-card animate-fade-in" *ngIf="encounters.length === 0">
-    <p>No encounters registered yet. Incidents will appear here chronologically once recorded by the Intake Agent.</p>
-  </div>
+  }
 </div>

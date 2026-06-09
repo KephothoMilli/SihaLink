@@ -411,6 +411,10 @@ def _ensure_indexes(db):
         db.follow_ups.create_index([("encounter_id", 1)])
         db.follow_ups.create_index([("chw_id", 1), ("status", 1), ("due_date", 1)])
         db.follow_ups.create_index([("county", 1), ("status", 1), ("due_date", 1)])
+        # ── Agentic workflow state + memory ───────────────────────────────────
+        db.workflow_states.create_index([("workflow_id", 1)], unique=True, sparse=True)
+        db.workflow_states.create_index([("state", 1), ("updated_at", -1)])
+        db.agent_memory.create_index([("session_id", 1)], unique=True, sparse=True)
         logger.info("✅ Surveillance indexes verified")
     except OperationFailure as exc:
         logger.warning("Index creation warning: %s", exc)
@@ -420,7 +424,7 @@ def _ensure_indexes(db):
 # TOOL FUNCTIONS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def run_outbreak_detection(county: str, lat: float, lng: float, hours: int = 6) -> dict:
+def run_outbreak_detection(county: str, lat: float, lng: float, hours: int = 6) -> Dict[str, Any]:
     """
     Run geospatial outbreak detection for a county using MongoDB aggregation.
     Compares case counts against 4-week rolling baselines to detect spikes.
@@ -496,7 +500,7 @@ def run_outbreak_detection(county: str, lat: float, lng: float, hours: int = 6) 
     return {"county": county, "alerts_detected": len(alerts), "alerts": alerts}
 
 
-def detect_silent_pandemic(county: str, weeks: int = 4) -> dict:
+def detect_silent_pandemic(county: str, weeks: int = 4) -> Dict[str, Any]:
     """
     Detect silent pandemics — syndromes with a persistent upward trend over
     multiple weeks that never trigger a single-week spike threshold.
@@ -558,7 +562,7 @@ def detect_silent_pandemic(county: str, weeks: int = 4) -> dict:
     }
 
 
-def detect_cross_county_spread(syndrome: str, hours: int = 48) -> dict:
+def detect_cross_county_spread(syndrome: str, hours: int = 48) -> Dict[str, Any]:
     """
     Detect whether a syndrome is simultaneously rising in multiple counties,
     indicating cross-county spread or a common-source outbreak (e.g., contaminated
@@ -619,7 +623,7 @@ def detect_cross_county_spread(syndrome: str, hours: int = 48) -> dict:
     }
 
 
-def formulate_response_protocol(syndrome: str, county: str, alert_level: str = "YELLOW") -> dict:
+def formulate_response_protocol(syndrome: str, county: str, alert_level: str = "YELLOW") -> Dict[str, Any]:
     """
     Generate and persist a structured response protocol for a detected syndrome.
 
@@ -697,7 +701,7 @@ def formulate_response_protocol(syndrome: str, county: str, alert_level: str = "
     return protocol_doc
 
 
-def get_protocol(syndrome: str, county: Optional[str] = None) -> dict:
+def get_protocol(syndrome: str, county: Optional[str] = None) -> Dict[str, Any]:
     """
     Retrieve the active response protocol for a syndrome, optionally county-specific.
     Used by CHWs via the Telegram /protocol command.
@@ -726,7 +730,7 @@ def get_protocol(syndrome: str, county: Optional[str] = None) -> dict:
     return template
 
 
-def run_vector_similarity_search(query_vector: list, lat: float, lng: float, top_k: int = 10) -> dict:
+def run_vector_similarity_search(query_vector: List[float], lat: float, lng: float, top_k: int = 10) -> Dict[str, Any]:
     """
     Use Atlas Vector Search to find semantically similar clinical cases.
     Requires the vector_index on encounters.embedding.
@@ -750,7 +754,7 @@ def run_vector_similarity_search(query_vector: list, lat: float, lng: float, top
         return {"similar_cases": [], "count": 0, "error": str(exc)}
 
 
-def update_baselines(county: Optional[str] = None) -> dict:
+def update_baselines(county: Optional[str] = None) -> Dict[str, Any]:
     """
     Recalculate 4-week rolling baselines for each syndrome per county.
     Stores results in the baselines collection for spike detection.
@@ -804,7 +808,7 @@ def update_baselines(county: Optional[str] = None) -> dict:
         return {"baselines_updated": 0, "error": str(exc)}
 
 
-def get_county_stats(county: str) -> dict:
+def get_county_stats(county: str) -> Dict[str, Any]:
     """
     Get quick surveillance statistics for a county.
     Used by the Telegram /status command and the dashboard.
@@ -841,7 +845,7 @@ def get_county_stats(county: str) -> dict:
         return {"encounters_today": 0, "active_alerts": 0, "error": str(exc)}
 
 
-def detect_chw_outreach_gaps(county: str, days: int = 7) -> dict:
+def detect_chw_outreach_gaps(county: str, days: int = 7) -> Dict[str, Any]:
     """
     Identify wards with low or zero CHW encounter submissions — a proxy for
     outreach coverage gaps. Returns wards needing supervisor follow-up and
@@ -902,7 +906,7 @@ def detect_chw_outreach_gaps(county: str, days: int = 7) -> dict:
     }
 
 
-def get_chw_performance(county: str, weeks: int = 4) -> dict:
+def get_chw_performance(county: str, weeks: int = 4) -> Dict[str, Any]:
     """
     Analyse CHW performance metrics: encounters submitted, RED/YELLOW cases
     identified, and weeks active. Identifies top performers and those needing support.
@@ -961,7 +965,7 @@ def get_chw_performance(county: str, weeks: int = 4) -> dict:
 
 root_agent = LlmAgent(
     name="surveillance_agent",
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     description=(
         "SihaLink Surveillance Agent. Detects outbreaks, silent pandemics, and "
         "cross-county spread using MongoDB aggregation pipelines and Atlas Vector Search. "

@@ -4,7 +4,7 @@ Location enrichment: GPS → admin hierarchy + nearest health facilities + ETAs.
 
 ADK pattern:
   - root_agent: LlmAgent with function tools
-  - Model: gemini-flash-latest (text, no streaming needed for geo enrichment)
+  - Model: gemini-3.5-flash (text, no streaming needed for geo enrichment)
   - Tools wrap Google Maps API calls
 """
 
@@ -36,7 +36,7 @@ def _get_client() -> _GeoClient:
 # Tool functions
 # ---------------------------------------------------------------------------
 
-def get_admin_hierarchy(latitude: float, longitude: float) -> dict:
+def get_admin_hierarchy(latitude: float, longitude: float) -> Dict[str, str]:
     """
     Reverse-geocode GPS coordinates to Kenya's administrative hierarchy.
     Returns village, ward, sub-county, and county.
@@ -56,7 +56,7 @@ def get_admin_hierarchy(latitude: float, longitude: float) -> dict:
                 "sub_county": "Unknown", "county": "Unknown"}
 
 
-def find_nearest_facilities(latitude: float, longitude: float) -> list:
+def find_nearest_facilities(latitude: float, longitude: float) -> List[Dict[str, Any]]:
     """
     Find the nearest health facilities within 50km of the given GPS coordinates.
     Returns up to 5 facilities with name, address, distance, ETA, and open status.
@@ -80,8 +80,8 @@ def find_nearest_facilities(latitude: float, longitude: float) -> list:
 
 
 def enrich_encounter_location(
-    encounter_json: dict, latitude: float, longitude: float
-) -> dict:
+    encounter_json: Dict[str, Any], latitude: float, longitude: float
+) -> Dict[str, Any]:
     """
     Fully enrich an encounter with location data: admin hierarchy + facilities + ETAs.
     This is the primary tool called by the Orchestrator after clinical extraction.
@@ -129,7 +129,7 @@ def enrich_encounter_location(
 
 root_agent = LlmAgent(
     name="geo_agent",
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     description=(
         "Location enrichment agent for SihaLink. "
         "Converts GPS coordinates to Kenya administrative hierarchy "

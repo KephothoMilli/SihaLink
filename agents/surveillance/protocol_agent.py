@@ -9,7 +9,7 @@ Architecture
 ------------
   ProtocolResearchAgent — LlmAgent (Gemini 2.0 Flash)
     Tools:
-      - google_search       (ADK built-in — searches WHO, CDC, MoH, ECDC)
+      - search_health_guidelines  (plain Python callable — WHO/CDC/MOH research via Gemini grounding)
       - save_protocol       (persists the researched protocol to MongoDB)
       - get_existing_protocol  (retrieves an existing protocol to update)
       - get_kenya_context   (pulls Kenya-specific incidence data from MongoDB)
@@ -31,7 +31,6 @@ from typing import Any, Dict, List, Optional
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
-from google.adk.tools import google_search  # ADK built-in search tool
 from google.genai import types as genai_types
 
 logger = logging.getLogger("SihaLink-ProtocolResearch")
@@ -51,6 +50,120 @@ AUTHORITATIVE_SOURCES = [
 ]
 
 
+# ── Tool: search WHO/CDC/MOH guidelines ──────────────────────────────────────
+# Plain Python callable — required for ADK Automatic Function Calling (AFC).
+# The ADK built-in google_search tool object is NOT AFC-compatible when mixed
+# with Python callables; this function replaces it.
+
+def search_health_guidelines(
+    query: str,
+    focus_sources: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Search WHO, CDC, ECDC, and Kenya MOH guidelines for a disease or syndrome.
+    Uses the Gemini API with Google Search grounding to retrieve live guidance.
+
+    Call this tool BEFORE formulating any protocol. Use targeted queries:
+      - "[syndrome] WHO IDSR response protocol"
+      - "[syndrome] Kenya MOH treatment guidelines 2024"
+      - "[syndrome] CDC clinical management Africa"
+      - "[syndrome] outbreak response field guide"
+
+    Args:
+        query:         Search query targeting authoritative public health sources.
+        focus_sources: Optional comma-separated domains to emphasise
+                       (default: who.int, cdc.gov, health.go.ke).
+
+    Returns:
+        dict with text (full response), query, and sources list.
+    """
+    import google.generativeai as genai_sdk
+
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return {
+            "query":  query,
+            "text":   "",
+            "error":  "GEMINI_API_KEY not set — search unavailable",
+        }
+
+    sources = focus_sources or "who.int, cdc.gov, health.go.ke, afro.who.int"
+    prompt = (
+        f"Search for authoritative public health guidance on the following:\n\n"
+        f"{query}\n\n"
+        f"Focus on sources from: {sources}\n"
+        f"Provide detailed, actionable clinical guidance including:\n"
+        f"- Immediate response actions (within 24 hours)\n"
+        f"- Community health worker field tasks\n"
+        f"- Patient follow-up schedule\n"
+        f"- Reporting thresholds\n"
+        f"Cite your sources with URLs where possible."
+    )
+
+    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() in ("1", "TRUE")
+
+    try:
+        if use_vertex:
+            # Vertex AI path — OAuth via ADC, not API key
+            project  = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+            location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+            if not project:
+                return {
+                    "query":  query,
+                    "text":   "Search unavailable: GOOGLE_CLOUD_PROJECT not set.",
+                    "sources": [],
+                }
+            import vertexai
+            from vertexai.generative_models import GenerativeModel, Tool, grounding
+            vertexai.init(project=project, location=location)
+            model = GenerativeModel(
+                model_name="gemini-2.5-flash",
+                tools=[Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())],
+            )
+        else:
+            genai_sdk.configure(api_key=api_key)
+            model = genai_sdk.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                tools="google_search_retrieval",
+            )
+        response = model.generate_content(prompt)
+        text = response.text if response.text else ""
+
+        # Try to extract grounding citations
+        sources_found: List[str] = []
+        try:
+            for candidate in (response.candidates or []):
+                gm = getattr(candidate, "grounding_metadata", None)
+                if gm:
+                    for chunk in (getattr(gm, "grounding_chunks", None) or []):
+                        web = getattr(chunk, "web", None)
+                        if web and getattr(web, "uri", None):
+                            sources_found.append(
+                                f"{getattr(web, 'title', 'Source')}: {web.uri}"
+                            )
+        except Exception:
+            pass
+
+        logger.info(
+            "[ProtocolSearch] Query: '%s' → %d chars, %d sources",
+            query[:60], len(text), len(sources_found),
+        )
+        return {
+            "query":   query,
+            "text":    text[:3000],  # cap for token budget
+            "sources": sources_found,
+        }
+
+    except Exception as exc:
+        logger.warning("[ProtocolSearch] Search failed (%s) — agent will use training data", exc)
+        return {
+            "query":  query,
+            "text":   f"Search unavailable: {exc}. Use your training knowledge of WHO IDSR guidelines.",
+            "sources": [],
+            "error":  str(exc),
+        }
+
+
 # ── Tool: save a researched protocol to MongoDB ───────────────────────────────
 
 def save_protocol(
@@ -66,7 +179,7 @@ def save_protocol(
     sources_consulted: List[str],
     research_summary: str,
     version_notes: str = "",
-) -> dict:
+) -> Dict[str, Any]:
     """
     Persist an AI-researched response protocol to MongoDB.
     Called by the Protocol Research Agent after synthesising guidance.
@@ -144,7 +257,7 @@ def save_protocol(
         return {"error": str(exc)}
 
 
-def get_existing_protocol(syndrome: str, county: Optional[str] = None) -> dict:
+def get_existing_protocol(syndrome: str, county: Optional[str] = None) -> Dict[str, Any]:
     """
     Retrieve an existing protocol from MongoDB before updating.
     The agent uses this to see what's already stored and decide if it
@@ -179,7 +292,7 @@ def get_existing_protocol(syndrome: str, county: Optional[str] = None) -> dict:
         return {"found": False, "error": str(exc)}
 
 
-def get_kenya_context(syndrome: str, county: str) -> dict:
+def get_kenya_context(syndrome: str, county: str) -> Dict[str, Any]:
     """
     Pull Kenya-specific incidence data for a syndrome to contextualise the
     protocol — recent case counts, affected wards, age/sex distribution.
@@ -257,7 +370,7 @@ def get_kenya_context(syndrome: str, county: str) -> dict:
 
 protocol_research_agent = LlmAgent(
     name="protocol_research_agent",
-    model="gemini-2.0-flash",   # Gemini 2.0 Flash for grounded search + reasoning
+    model="gemini-2.5-flash",   # Vertex AI — confirmed in Google Cloud ADK quickstart
     description=(
         "Agentic protocol formulation specialist. Researches WHO, CDC, ECDC, "
         "and Kenya MOH guidelines in real time using Google Search, then "
@@ -268,7 +381,7 @@ specialist that formulates evidence-based clinical response protocols.
 
 YOUR MISSION:
 When given a syndrome, county, and alert level, you must:
-1. RESEARCH current WHO, CDC, Kenya MOH, and ECDC guidelines using google_search
+1. RESEARCH current WHO, CDC, Kenya MOH, and ECDC guidelines using search_health_guidelines
 2. CONTEXTUALISE with local Kenya data using get_kenya_context
 3. CHECK if a protocol already exists using get_existing_protocol
 4. SYNTHESISE a structured protocol that is:
@@ -325,10 +438,10 @@ ALWAYS:
 - Set version_notes if updating an existing protocol
 """,
     tools=[
-        google_search,          # ADK built-in: real-time WHO/CDC/MOH research
-        save_protocol,          # persist to MongoDB
-        get_existing_protocol,  # check for existing protocol
-        get_kenya_context,      # pull local incidence data
+        search_health_guidelines,   # plain Python callable: WHO/CDC/MOH research via Gemini grounding
+        save_protocol,              # persist to MongoDB
+        get_existing_protocol,      # check for existing protocol
+        get_kenya_context,          # pull local incidence data
     ],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.2,        # slightly higher than 0.1 for synthesis creativity
@@ -436,14 +549,23 @@ def research_and_formulate_protocol_sync(
     county: str,
     alert_level: str = "YELLOW",
     force_refresh: bool = False,
-) -> dict:
+) -> Dict[str, Any]:
     """Synchronous wrapper for research_and_formulate_protocol."""
     import concurrent.futures
+    
+    def _run_async():
+        """Run the async protocol research in a fresh event loop."""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(
+                research_and_formulate_protocol(syndrome, county, alert_level, force_refresh)
+            )
+        finally:
+            loop.close()
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(
-            asyncio.run,
-            research_and_formulate_protocol(syndrome, county, alert_level, force_refresh),
-        )
+        future = pool.submit(_run_async)
         try:
             return future.result(timeout=60)
         except Exception as exc:

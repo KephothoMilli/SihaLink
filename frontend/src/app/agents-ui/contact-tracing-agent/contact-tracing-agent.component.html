@@ -136,9 +136,11 @@
 
               <!-- Action buttons -->
               <div class="card-actions">
-                <button mat-stroked-button (click)="loadTraceDetail(trace.trace_id)">
-                  <span class="material-symbols-outlined btn-icon">open_in_new</span>
-                  View Detail
+                <button mat-stroked-button (click)="openInlineDetail(trace.trace_id)">
+                  <span class="material-symbols-outlined btn-icon">
+                    {{ isInlineExpanded(trace.trace_id) ? 'expand_less' : 'open_in_new' }}
+                  </span>
+                  {{ isInlineExpanded(trace.trace_id) ? 'Hide Details' : 'View Detail' }}
                 </button>
                 <button mat-stroked-button color="warn" (click)="resolveTrace(trace.trace_id)"
                   [matTooltip]="'Mark all contacts resolved'">
@@ -148,6 +150,123 @@
               </div>
             </mat-card-content>
           </mat-card>
+
+          <!-- ── INLINE DETAIL PANEL (below each card) ─────────── -->
+          @if (isInlineExpanded(trace.trace_id)) {
+          <div class="inline-detail-panel">
+            @if (inlineLoading) {
+            <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+            }
+            @if (!inlineLoading && inlineTrace) {
+            <!-- Analytics row -->
+            <div class="inline-analytics-row">
+              <div class="inline-stat">
+                <span class="material-symbols-outlined" style="color:#0288d1">group</span>
+                <div>
+                  <p class="inline-stat-val">{{ inlineTrace.total_contacts }}</p>
+                  <p class="inline-stat-lbl">Total Contacts</p>
+                </div>
+              </div>
+              <div class="inline-stat">
+                <span class="material-symbols-outlined" style="color:#388e3c">check_circle</span>
+                <div>
+                  <p class="inline-stat-val">{{ completionPct(inlineTrace) }}%</p>
+                  <p class="inline-stat-lbl">Completion</p>
+                </div>
+              </div>
+              <div class="inline-stat">
+                <span class="material-symbols-outlined" style="color:#d32f2f">coronavirus</span>
+                <div>
+                  <p class="inline-stat-val">{{ inlineTrace.confirmed_cases }}</p>
+                  <p class="inline-stat-lbl">Confirmed</p>
+                </div>
+              </div>
+              <div class="inline-stat">
+                <span class="material-symbols-outlined" style="color:#f57c00">percent</span>
+                <div>
+                  <p class="inline-stat-val">{{ inlineTrace.analytics?.secondary_attack_rate ?? 0 }}%</p>
+                  <p class="inline-stat-lbl">SAR</p>
+                </div>
+              </div>
+              @if (inlineTrace.analytics?.overdue) {
+              <div class="inline-stat">
+                <span class="material-symbols-outlined" style="color:#e65100">schedule</span>
+                <div>
+                  <p class="inline-stat-val" style="color:#e65100">{{ inlineTrace.analytics!.overdue }}</p>
+                  <p class="inline-stat-lbl">Overdue</p>
+                </div>
+              </div>
+              }
+            </div>
+
+            <!-- Status histogram -->
+            @if (inlineTrace.analytics?.status_histogram) {
+            <div class="inline-histogram">
+              @for (key of histogramKeys(inlineTrace.analytics!.status_histogram); track key) {
+              <div class="inline-bar-row">
+                <span class="inline-bar-lbl">{{ key }}</span>
+                <div class="inline-bar-track">
+                  <div class="inline-bar-fill" [style.width.%]="inlineTrace.total_contacts > 0
+                      ? (inlineTrace.analytics!.status_histogram[key] / inlineTrace.total_contacts) * 100
+                      : 0" [style.background]="statusColor(key)">
+                  </div>
+                </div>
+                <span class="inline-bar-val">{{ inlineTrace.analytics!.status_histogram[key] }}</span>
+              </div>
+              }
+            </div>
+            }
+
+            <!-- Contact list (top 8 contacts) -->
+            @if (inlineTrace.contacts?.length) {
+            <div class="inline-contacts-header">
+              <span class="mat-label-small">Contacts ({{ inlineTrace.contacts!.length }} total)</span>
+              <button mat-button (click)="loadTraceDetail(inlineTrace.trace_id)" style="font-size:0.75rem">
+                View all in Trace Detail tab →
+              </button>
+            </div>
+            <div class="inline-contacts-list">
+              @for (c of inlineTrace.contacts!.slice(0, 8); track c.contact_id) {
+              <div class="inline-contact-row"
+                [class.contact-overdue]="c.status === 'identified' && c.due_date && c.due_date < currentDate">
+                <span class="tier-badge" [style.background]="tierColor(c.risk_tier) + '20'"
+                  [style.color]="tierColor(c.risk_tier)">{{ c.risk_tier }}</span>
+                <span class="mono" style="font-size:0.75rem">{{ c.contact_id }}</span>
+                <span>{{ c.location.ward }}, {{ c.location.county }}</span>
+                <span class="status-dot" [style.background]="statusColor(c.status)">{{ c.status }}</span>
+                <span style="font-size:0.75rem;color:var(--mat-sys-on-surface-variant)">
+                  Due: {{ c.due_date | date:'dd MMM' }}
+                </span>
+              </div>
+              }
+            </div>
+            }
+
+            <!-- History (last 3 events) -->
+            @if (inlineTrace.history?.length) {
+            <div class="inline-history">
+              <span class="mat-label-small" style="font-weight:700;text-transform:uppercase;letter-spacing:.04em;">
+                Recent Activity
+              </span>
+              @for (h of inlineTrace.history!.slice(-3).reverse(); track h.timestamp) {
+              <div class="inline-history-item">
+                <span class="material-symbols-outlined" style="font-size:0.9rem;color:var(--mat-sys-primary)">
+                  radio_button_checked
+                </span>
+                <div>
+                  <p style="font-size:0.8rem;font-weight:600">{{ h.event | titlecase }}
+                    — {{ h.timestamp | date:'dd MMM HH:mm' }}</p>
+                  @if (h.detail) {
+                  <p style="font-size:0.75rem;color:var(--mat-sys-on-surface-variant)">{{ h.detail }}</p>
+                  }
+                </div>
+              </div>
+              }
+            </div>
+            }
+            }
+          </div>
+          }
           }
         </div>
       </div>

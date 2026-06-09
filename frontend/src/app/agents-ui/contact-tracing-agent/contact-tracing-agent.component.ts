@@ -137,6 +137,11 @@ export class ContactTracingAgentComponent implements OnInit {
   filterSyndrome = '';
   tracesLoading = false;
 
+  // Inline detail on Active Traces tab (avoids tab switch)
+  inlineTraceId: string | null = null;
+  inlineTrace: ContactTrace | null = null;
+  inlineLoading = false;
+
   // ── Initiate Trace tab ────────────────────────────────────────────────────
   initEncounterId = '';
   initAlertId = '';
@@ -185,6 +190,32 @@ export class ContactTracingAgentComponent implements OnInit {
     } finally {
       this.tracesLoading = false;
     }
+  }
+
+  /** Toggle inline detail panel on the Active Traces tab card. */
+  async openInlineDetail(traceId: string) {
+    // Collapse if already open
+    if (this.inlineTraceId === traceId) {
+      this.inlineTraceId = null;
+      this.inlineTrace = null;
+      return;
+    }
+    this.inlineTraceId = traceId;
+    this.inlineTrace = null;
+    this.inlineLoading = true;
+    try {
+      this.inlineTrace = await this.ctService.getTraceStatus(traceId);
+    } catch (err) {
+      this.error =
+        err instanceof Error ? err.message : 'Failed to load trace detail';
+      this.inlineTraceId = null;
+    } finally {
+      this.inlineLoading = false;
+    }
+  }
+
+  isInlineExpanded(traceId: string): boolean {
+    return this.inlineTraceId === traceId;
   }
 
   // ── Initiate trace ────────────────────────────────────────────────────────

@@ -1,13 +1,95 @@
+# =============================================================================
+# SihaLink — .dockerignore
+# Keeps the build context lean — only what the Dockerfile actually COPYs
+# =============================================================================
+
+# ── Python artifacts ──────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 .Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
 venv/
+env/
 ENV/
+SihaLinkEnv/
+
+# ── Secrets — NEVER in image ──────────────────────────────────────────────────
 .env
-.DS_Store
-.git
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Node modules (rebuilt in Docker stages) ──────────────────────────────────
+node_modules/
+frontend/node_modules/
+agents/notify/node_modules/
+agents/notify/dist/
+frontend/dist/
+frontend/.angular/
+
+# ── Test & seed data ──────────────────────────────────────────────────────────
+data/seed_test_data.py
+data/test_*.py
+
+# ── Docs & local scripts ──────────────────────────────────────────────────────
+*.md
+!README.md
+deploy.sh
+deploy.ps1
+start-dev.sh
+start-dev.ps1
+setup-dev.sh
+DEPLOYMENT_*.md
+QUICK_START_DEV.md
+CLAUDE.md
+IDEA.md
+SKILLS.md
+implementation_plan.md
+SESSION_SUMMARY*.md
+TESTING_*.md
+DATA_CORRECTION*.md
+MONGODB_TROUBLESHOOTING.md
+IMPLEMENTATION_COMPLETE.md
+CLINICAL_DATASET_INTEGRATION.md
+
+# ── Infrastructure as code (not needed in runtime) ───────────────────────────
+infrastructure/
+
+# ── ADK session DBs ───────────────────────────────────────────────────────────
+**/.adk/
+*.db
+
+# ── Firebase config (frontend-only) ──────────────────────────────────────────
+firebase.json
+.firebaserc
+
+# ── Log files ─────────────────────────────────────────────────────────────────
+*.log
+logs/

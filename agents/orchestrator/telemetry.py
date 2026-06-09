@@ -12,10 +12,12 @@ Endpoint pattern (per Dynatrace docs):
 Auth header:
   Authorization: Api-Token {DYNATRACE_API_TOKEN}
 
-Required API token scopes:
-  - openTelemetryTrace.ingest
-  - openTelemetryMetric.ingest
-  - openTelemetryLog.ingest
+Required API token scopes (create at Settings → Access tokens):
+  - openTelemetryTrace.ingest   (classic OTLP traces)
+  - openTelemetryMetric.ingest  (classic OTLP metrics)
+  - openTelemetryLog.ingest     (classic OTLP logs)
+  - openpipeline:traces:ingest  (required on newer SaaS tenants)
+  - openpipeline:logs:ingest    (required on newer SaaS tenants)
 
 Reference: https://docs.dynatrace.com/docs/ingest-from/opentelemetry/monitor
 """
@@ -24,6 +26,66 @@ import logging
 import os
 
 logger = logging.getLogger("SihaLink-Telemetry")
+
+
+class _SuppressOTLPExportErrors(logging.Filter):
+    """
+    Filter that lets the FIRST OTel exporter 4xx error through as a WARNING,
+    then silently drops all subsequent repeats so the terminal isn't spammed.
+
+    Attach this to every logger that the OTel SDK uses internally.
+    """
+    _warned: bool = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        is_export_error = (
+            "Failed to export" in msg
+            or "Export" in msg
+            or "403" in msg
+            or "401" in msg
+            or "429" in msg
+            or "missing required scope" in msg
+            or "Access token" in msg
+        )
+        if not is_export_error:
+            return True  # not an export error — pass through unchanged
+
+        if not _SuppressOTLPExportErrors._warned:
+            _SuppressOTLPExportErrors._warned = True
+            # Rewrite as a single clear WARNING with a fix hint
+            record.levelno   = logging.WARNING
+            record.levelname = "WARNING"
+            record.msg = (
+                "[Telemetry] Dynatrace OTel export failed (will suppress repeats). "
+                "Fix: add 'openpipeline:traces:ingest' + 'openTelemetryTrace.ingest' "
+                "scopes to the token at "
+                "https://xjn51780.live.dynatrace.com/ui/settings/access-tokens — "
+                "original error: %s"
+            )
+            record.args = (msg,)
+            return True
+
+        # All subsequent export errors → drop completely (DEBUG is too noisy too)
+        return False
+
+
+# Attach the filter to ALL loggers the OTel SDK uses for export errors
+_suppress_filter = _SuppressOTLPExportErrors()
+for _log_name in (
+    "opentelemetry.exporter.otlp.proto.http",
+    "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+    "opentelemetry.exporter.otlp.proto.http.metric_exporter",
+    "opentelemetry.sdk.trace.export",
+    "opentelemetry.sdk.metrics.export",
+    "opentelemetry.sdk.logs.export",
+    # The SDK sometimes logs via the root BatchSpanProcessor logger
+    "opentelemetry.sdk.trace",
+):
+    _otel_logger = logging.getLogger(_log_name)
+    _otel_logger.addFilter(_suppress_filter)
+    # Ensure the logger itself doesn't block propagation
+    _otel_logger.propagate = True
 
 
 def _build_otlp_endpoint(path: str) -> str:
@@ -40,6 +102,34 @@ def _build_headers() -> dict:
     if not token:
         return {}
     return {"Authorization": f"Api-Token {token}"}
+
+
+# Holds references to OTel providers so graceful_shutdown() can flush them
+_telemetry_state: dict = {}
+
+
+def graceful_shutdown() -> None:
+    """
+    Flush and shut down OTel providers cleanly on process exit.
+    Call this from the FastAPI lifespan shutdown hook to prevent
+    'Task was destroyed but it is pending!' warnings from aiohttp/genai.
+    """
+    tracer_provider = _telemetry_state.get("tracer_provider")
+    meter_provider  = _telemetry_state.get("meter_provider")
+
+    if tracer_provider:
+        try:
+            tracer_provider.shutdown()
+            logger.debug("[Telemetry] TracerProvider shut down cleanly")
+        except Exception as exc:
+            logger.debug("[Telemetry] TracerProvider shutdown error: %s", exc)
+
+    if meter_provider:
+        try:
+            meter_provider.shutdown()
+            logger.debug("[Telemetry] MeterProvider shut down cleanly")
+        except Exception as exc:
+            logger.debug("[Telemetry] MeterProvider shutdown error: %s", exc)
 
 
 def init_telemetry() -> bool:
@@ -94,8 +184,25 @@ def init_telemetry() -> bool:
             headers=headers,
         )
         tracer_provider = TracerProvider(resource=resource)
-        tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(
+                trace_exporter,
+                # Longer schedule reduces export frequency → fewer 403 log lines
+                # even before the filter kicks in
+                schedule_delay_millis=60_000,   # flush every 60 s (default: 5 s)
+                max_export_batch_size=128,
+                export_timeout_millis=10_000,
+            )
+        )
         trace.set_tracer_provider(tracer_provider)
+        # Store reference so graceful_shutdown() can flush + close cleanly
+        _telemetry_state["tracer_provider"] = tracer_provider
+        logger.info(
+            "[Telemetry] Traces → %s  "
+            "(if 403: add 'openpipeline:traces:ingest' and "
+            "'openTelemetryTrace.ingest' to the Dynatrace token)",
+            _build_otlp_endpoint("/v1/traces"),
+        )
 
         # ── Metrics ───────────────────────────────────────────────────────
         metric_exporter = OTLPMetricExporter(
@@ -110,6 +217,7 @@ def init_telemetry() -> bool:
             resource=resource, metric_readers=[metric_reader]
         )
         metrics.set_meter_provider(meter_provider)
+        _telemetry_state["meter_provider"] = meter_provider
 
         # ── Logs (OTel log bridge) ─────────────────────────────────────────
         _init_log_bridge(resource, headers)

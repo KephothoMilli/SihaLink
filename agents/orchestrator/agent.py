@@ -4,7 +4,7 @@ Central coordinator that routes work between all specialized sub-agents.
 
 ADK pattern:
   - root_agent: LlmAgent with function tools + sub-agent delegation
-  - Model: gemini-flash-latest-live-001 (Live API for real-time CHV interaction)
+  - Model: gemini-3.5-flash (run_async); gemini-live-2.5-flash-preview (run_live voice sessions)
   - RunConfig with SpeechConfig for TTS feedback to CHVs
   - State machine lifecycle: IDLE → LISTENING → EXTRACTING → GEOCODING
     → STORING → [DECISION_GATE] → NOTIFYING → COMPLETE
@@ -23,7 +23,7 @@ logger = logging.getLogger("SihaLink-Orchestrator")
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from google.adk.agents import LlmAgent
@@ -51,8 +51,9 @@ if _telemetry_active:
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         from opentelemetry.instrumentation.pymongo import PymongoInstrumentor
-        HTTPXClientInstrumentor().instrument()   # traces all httpx calls (Gemini, Maps, Telegram)
-        PymongoInstrumentor().instrument()        # traces every MongoDB query
+
+        HTTPXClientInstrumentor().instrument()  # traces all httpx calls (Gemini, Maps, Telegram)
+        PymongoInstrumentor().instrument()  # traces every MongoDB query
         logger.info("[Telemetry] HTTPx + PyMongo auto-instrumentation active")
     except ImportError:
         logger.debug("[Telemetry] Auto-instrumentation packages not installed")
@@ -67,6 +68,23 @@ NOTIFY_BASE = os.getenv("NOTIFY_AGENT_URL", "http://localhost:3001")
 
 
 class NotifyAgentClient:
+    """HTTP shim for the Node.js Notify Agent (grammY/Fastify bot).
+
+    Uses a circuit-breaker pattern: after the first connection failure the
+    error is logged at WARNING level exactly once, then demoted to DEBUG
+    until a successful call resets the breaker.
+    """
+
+    def __init__(self) -> None:
+        self._notify_down = False  # True after first failure — suppresses repeat warnings
+
+    def _log_unavailable(self, exc: Exception, context: str) -> None:
+        if not self._notify_down:
+            logger.warning("Notify Agent unavailable (%s) — %s", exc, context)
+            self._notify_down = True
+        else:
+            logger.debug("Notify Agent still unavailable: %s", exc)
+
     async def dispatch_referral(self, enriched_json: Dict[str, Any]) -> Dict[str, Any]:
         extracted = enriched_json.get("extracted", {})
         facilities = enriched_json.get("nearest_facilities", [{}])
@@ -89,25 +107,28 @@ class NotifyAgentClient:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(f"{NOTIFY_BASE}/notify/referral", json=payload)
                 resp.raise_for_status()
+                self._notify_down = False  # reset breaker on success
                 return resp.json()
         except Exception as exc:
-            logger.warning("Notify Agent unavailable (%s) — referral logged only", exc)
+            self._log_unavailable(exc, "referral logged only")
             return {"delivered": False, "note": str(exc)}
 
     async def dispatch_outbreak_alert(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         try:
             import json
+
             payload_str = json.dumps({"alert": alert}, default=str)
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
-                    f"{NOTIFY_BASE}/notify/outbreak_alert", 
+                    f"{NOTIFY_BASE}/notify/outbreak_alert",
                     content=payload_str,
-                    headers={"Content-Type": "application/json"}
+                    headers={"Content-Type": "application/json"},
                 )
                 resp.raise_for_status()
+                self._notify_down = False  # reset breaker on success
                 return resp.json()
         except Exception as exc:
-            logger.warning("Notify Agent unavailable (%s) — alert logged only", exc)
+            self._log_unavailable(exc, "alert logged only")
             return {"delivered": False, "note": str(exc)}
 
 
@@ -128,6 +149,13 @@ orchestrator = Orchestrator(intake_agent, geo_agent, data_agent, notify_agent)
 from agents.swarm import SwarmController
 
 from agents.contact_tracing.agent import ContactTracingAgent
+from agents.workflows import (
+    agent_registry,
+    get_workflow_state,
+    get_agent_memory,
+    pipeline_reflect,
+    ReActStep,
+)
 
 swarm = SwarmController.get()
 contact_tracing_agent = ContactTracingAgent()
@@ -141,12 +169,25 @@ swarm.initialise(
     contact_tracing=contact_tracing_agent,
 )
 
+# ── Register all agents in the AgentRegistry ─────────────────────────────────
+agent_registry.register("intake", intake_agent)
+agent_registry.register("geo", geo_agent)
+agent_registry.register("data", data_agent)
+agent_registry.register("notify", notify_agent)
+agent_registry.register("surveillance", surveillance_agent)
+agent_registry.register("contact_tracing", contact_tracing_agent)
+agent_registry.register("orchestrator", orchestrator)
+
+# ── Workflow state + memory bound to the data agent's DB ─────────────────────
+_workflow_state = get_workflow_state(data_agent.db if data_agent.connected else None)
+_agent_memory = get_agent_memory(data_agent.db if data_agent.connected else None)
+
 # ---------------------------------------------------------------------------
 # Orchestrator tool functions (ADK FunctionTools)
 # ---------------------------------------------------------------------------
 
 
-def route_to_intake(audio_base64: str, session_id: str) -> dict:
+def route_to_intake(audio_base64: str, session_id: str) -> Dict[str, Any]:
     """
     Send a CHV audio recording to the Intake Agent for multilingual clinical extraction.
     Supports Dholuo, Swahili, Kikuyu, Somali, and English (including code-switching).
@@ -159,24 +200,48 @@ def route_to_intake(audio_base64: str, session_id: str) -> dict:
         dict with session_id and extracted clinical JSON.
     """
     import asyncio
+    import concurrent.futures
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
+        # Try to use existing event loop if available
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Event loop already running — use thread executor
+                def _run_async():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(
+                            intake_agent.process_audio(audio_base64)
+                        )
+                    finally:
+                        new_loop.close()
 
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    asyncio.run, intake_agent.process_audio(audio_base64)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(_run_async)
+                    extracted = future.result(timeout=30)
+            else:
+                # Event loop exists but not running
+                extracted = loop.run_until_complete(
+                    intake_agent.process_audio(audio_base64)
                 )
-                extracted = future.result(timeout=30)
-        else:
-            extracted = loop.run_until_complete(
-                intake_agent.process_audio(audio_base64)
-            )
+        except RuntimeError:
+            # No event loop in this thread
+            extracted = asyncio.run(intake_agent.process_audio(audio_base64))
+
         return {"session_id": session_id, "extracted": extracted}
     except Exception as exc:
-        return {"session_id": session_id, "error": str(exc)}
+        logger.error("route_to_intake failed: %s", exc, exc_info=True)
+        return {
+            "session_id": session_id,
+            "extracted": {
+                "error": "intake_processing_failed",
+                "details": str(exc),
+                "syndrome": "unknown",
+                "triage_color": "YELLOW",
+            },
+        }
 
 
 def route_to_geo(encounter_json: dict, latitude: float, longitude: float) -> dict:
@@ -544,106 +609,162 @@ def run_silent_pandemic_scan(county: str, weeks: int = 4) -> dict:
 
 root_agent = LlmAgent(
     name="orchestrator_agent",
-    model="gemini-flash-latest",  # generateContent model for ADK web + run_async
-    # Live API (run_live) is invoked separately via build_orchestrator_run_config()
+    model="gemini-3.5-flash",  # Vertex AI — confirmed in Google Cloud ADK quickstart
     description=(
-        "SihaLink Orchestrator — central coordinator for community health disease "
-        "surveillance in Kenya. Manages the full encounter lifecycle: voice intake → "
-        "geo-enrichment → MongoDB storage → human-in-the-loop gate → Telegram notification. "
-        "Runs outbreak detection, silent pandemic scanning, protocol formulation, "
-        "CHW outreach gap analysis, and patient follow-up scheduling every 6 hours."
+        "SihaLink Orchestrator — agentic coordinator for community health disease "
+        "surveillance in Kenya. Implements ReAct (Reason→Act→Observe) loops, "
+        "self-reflection after each pipeline stage, and direct agent delegation. "
+        "Manages the full encounter lifecycle, outbreak detection, protocol "
+        "formulation, CHW outreach, and patient follow-up."
     ),
     instruction="""You are the SihaLink Orchestrator — the central intelligence of a
 multi-agent disease surveillance system serving Community Health Volunteers (CHVs) in Kenya.
 
-═══════════════════════════════════════════════════════════════
-MISSION 1 — ENCOUNTER LIFECYCLE (triggered by every CHV recording)
-═══════════════════════════════════════════════════════════════
-State machine: IDLE → LISTENING → EXTRACTING → GEOCODING → STORING
-               → [DECISION_GATE] → NOTIFYING → FOLLOW_UP_SCHEDULED → COMPLETE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENTIC WORKFLOW PRINCIPLES (IBM Framework)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Step 1 — INTAKE
-  Call route_to_intake(audio_base64, session_id)
-  → Returns extracted clinical JSON with syndrome, triage_color, symptoms, language
+You operate using four core agentic patterns:
 
-Step 2 — GEO ENRICHMENT
-  Call route_to_geo(encounter_json, latitude, longitude)
-  → Returns admin hierarchy (village/ward/sub-county/county) + nearest facilities + ETAs
+1. ReAct (Reason → Act → Observe → Reflect)
+   Before EVERY tool call, state:
+     REASON: Why am I calling this tool? What do I expect?
+     ACT:    Call the tool with specific arguments.
+     OBSERVE: What did the tool return? Was it complete and correct?
+     REFLECT: Should I proceed, retry, or take a different path?
 
-Step 3 — STORE + FOLLOW-UPS
-  Call route_to_data(enriched_encounter)
-  → Inserts into MongoDB with Voyage AI / Google vector embedding
-  → Auto-schedules follow-ups: RED→[1,3,7,14d], YELLOW→[2,7,14d], GREEN→[7d]
+2. Chain-of-Thought Planning
+   For multi-step tasks, explicitly lay out your plan first:
+     "To process this encounter I need to: (1) extract clinical data,
+      (2) enrich with location, (3) store with embeddings,
+      (4) check triage color, (5) initiate contact trace if RED,
+      (6) request human gate if RED/YELLOW, (7) dispatch Telegram notification."
+   Then execute step-by-step, checking each result before proceeding.
 
-Step 4 — HUMAN-IN-THE-LOOP GATE (RED or YELLOW only)
-  Call request_human_decision(session_id, decision_type, summary)
-  → Pauses lifecycle; CHV confirms or declines via Telegram
-  → RED: auto-escalate after 60s timeout
-  → YELLOW: auto-queue (no send) after 60s timeout
-  → GREEN: skip gate entirely
+3. Self-Reflection After Each Stage
+   After completing a pipeline stage, evaluate:
+     - Is the data complete? (syndrome extracted? location enriched?)
+     - Are there anomalies? (unusual triage for reported symptoms?)
+     - Should I escalate to a specialist agent or continue?
+   If data is incomplete: retry with clarification_question tool.
+   If anomaly detected: log it AND continue — do not block the pipeline.
 
-Step 5 — NOTIFY (RED/YELLOW, confirmed only)
-  Call route_to_notify("referral", payload) → Telegram to facility
-  Call route_to_notify("outbreak_alert", payload) → Telegram to county channel
+4. Multi-Agent Delegation
+   You delegate to specialist agents when their expertise is needed:
+     - route_to_intake    → Intake Agent  (clinical extraction)
+     - route_to_geo       → Geo Agent     (location enrichment)
+     - route_to_data      → Data Agent    (MongoDB persistence)
+     - route_to_notify    → Notify Agent  (Telegram delivery)
+     - trigger_surveillance → Surveillance Agent (outbreak detection)
+     - get_response_protocol → Protocol Research Agent (WHO/CDC guidelines)
+   Each agent is autonomous. Your role is coordination, not execution.
 
-Step 6 — OFFLINE FALLBACK
-  If device offline: call queue_offline_encounter(encounter_json)
-  When back online: call process_offline_queue()
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MISSION 1 — ENCOUNTER LIFECYCLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+State: IDLE → LISTENING → EXTRACTING → GEOCODING → STORING
+       → [CONTACT_TRACING] → [DECISION_GATE] → NOTIFYING → COMPLETE
 
-═══════════════════════════════════════════════════════════════
-MISSION 2 — SURVEILLANCE (every 6 hours, all active counties)
-═══════════════════════════════════════════════════════════════
-  Call trigger_surveillance(county, lat, lng, immediate=True)
-  → Spike detection: ≥2× weekly baseline triggers alert
-  → Correlated pairs: cholera, measles, influenza, SAM
+PLAN before executing:
+  Step 1 — INTAKE (delegate to Intake Agent)
+    REASON: Extract syndrome, triage, symptoms, language from CHV input.
+    ACT: Call route_to_intake(audio_base64, session_id)
+    OBSERVE: Check syndrome is a valid WHO IDSR category. Check confidence ≥ 0.7.
+    REFLECT: If confidence < 0.7 or syndrome = 'unknown', note it but continue.
+             Do NOT block the pipeline for low confidence.
 
-  Call run_silent_pandemic_scan(county, weeks=4)
-  → Detects syndromes with persistent upward trend below spike threshold
-  → HIGH risk (delta>5): immediate protocol formulation + district notification
-  → MEDIUM risk (delta>2): monitor + weekly report
+  Step 2 — GEO ENRICHMENT (delegate to Geo Agent)
+    REASON: Admin hierarchy + nearest facilities needed for referral routing.
+    ACT: Call route_to_geo(encounter_json, latitude, longitude)
+    OBSERVE: Verify county and ward are populated. Verify ≥1 facility returned.
+    REFLECT: If location unavailable (0,0 coords), set county = 'Unknown' and continue.
 
-  For any detected signal (spike OR silent):
-  → Call route_to_notify("outbreak_alert", alert_payload)
+  Step 3 — PERSIST (delegate to Data Agent)
+    REASON: Encounter must be stored before gate — so data is never lost.
+    ACT: Call route_to_data(enriched_encounter)
+    OBSERVE: Confirm inserted_id returned.
+    REFLECT: If error, retry ONCE. If still failing, queue_offline_encounter.
 
-═══════════════════════════════════════════════════════════════
-MISSION 3 — PROTOCOL FORMULATION (on every new alert)
-═══════════════════════════════════════════════════════════════
-  Call get_response_protocol(syndrome, county)
-  → Returns WHO/MoH immediate actions + CHW field tasks + follow-up schedule
-  → If no protocol exists, the Surveillance Agent auto-generates one
+  Step 4 — CONTACT TRACING (if RED triage — delegate to Contact Tracing Agent)
+    REASON: RED cases need immediate exposure mapping.
+    Note: Contact tracing is triggered automatically by the swarm event bus.
+    This step is informational — the swarm handles it.
 
-  Call search_response_protocols(query)
-  → Full-text Atlas Search across all protocols
-  → Used when CHV sends /protocol to Telegram bot
+  Step 5 — HUMAN GATE (RED or YELLOW only)
+    REASON: Human confirmation before irreversible referral dispatch.
+    ACT: Call request_human_decision(session_id, "referral", summary, timeout=60)
+    OBSERVE: Wait for confirmed=True/False or timeout.
+    REFLECT: On timeout, apply HumanGatePolicy (RED → escalate, YELLOW → queue).
+    IMPORTANT: Never skip this gate for RED/YELLOW.
 
-═══════════════════════════════════════════════════════════════
-MISSION 4 — PATIENT FOLLOW-UP (daily check)
-═══════════════════════════════════════════════════════════════
-  Call get_chw_follow_ups(chw_id, overdue_only=True)
-  → Returns overdue tasks for a CHW — sent via Telegram /followup
+  Step 6 — NOTIFY (delegate to Notify Agent)
+    REASON: Facility must receive referral via Telegram before patient arrives.
+    ACT: Call route_to_notify("referral", referral_payload)
+    OBSERVE: Check delivered=True.
+    REFLECT: If delivery fails, log and continue — Notify Agent handles retries.
 
-  Call complete_patient_follow_up(follow_up_id, outcome, notes, chw_id)
-  → Outcomes: improved | stable | deteriorated | referred | deceased
-  → 'deteriorated' or 'referred' → immediately trigger new referral flow
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MISSION 2 — SURVEILLANCE (every 6 hours)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAN: For each active county:
+  REASON: Detect outbreak spikes vs 4-week rolling baselines.
+  ACT: trigger_surveillance(county, lat, lng, immediate=True)
+  OBSERVE: Count alerts_detected. For each alert, note syndrome + risk_level.
+  REFLECT: HIGH risk → immediately formulate protocol via get_response_protocol.
+           Cross-county spread ≥3 → escalate to NATIONAL level.
+  ACT: run_silent_pandemic_scan(county, weeks=4)
+  OBSERVE: Any trend_delta > 2 signals a silent pandemic.
+  REFLECT: Silent pandemic is MORE dangerous than spike. Always notify + formulate.
 
-  Call get_county_follow_up_summary(county)
-  → Used by /status command: pending, completed, overdue counts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MISSION 3 — PROTOCOL FORMULATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REASON: Every alert needs a response protocol before CHWs are notified.
+ACT: get_response_protocol(syndrome, county)
+OBSERVE: Check source_authority. If source = "TEMPLATE", the protocol
+         was not AI-researched. That is acceptable — templates are WHO-based.
+REFLECT: If no protocol found, call search_response_protocols(syndrome)
+         to find a similar one. Never leave an alert without a protocol.
 
-═══════════════════════════════════════════════════════════════
-MISSION 5 — CHW OUTREACH IMPROVEMENT (daily)
-═══════════════════════════════════════════════════════════════
-  Call check_chw_outreach_gaps(county, days=7)
-  → Identifies wards with zero or low encounter submissions
-  → CRITICAL gap (0 submissions): supervisor deployment alert via Telegram
-  → Generates targeted recommendations for each gap ward
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MISSION 4 — PATIENT FOLLOW-UP (daily)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REASON: Overdue follow-ups mean patients lost to follow-up — preventable deaths.
+ACT: get_chw_follow_ups(chw_id, overdue_only=True)
+OBSERVE: Count overdue tasks. For each, check outcome if completed.
+REFLECT: outcome = 'deteriorated' → immediately trigger new referral.
+         outcome = 'deceased' → log for district officer, no referral.
+         outcome = 'improved' → mark complete.
 
-INVARIANT RULES — NEVER VIOLATE:
-  • Never lose data — retry failed routes 3× before escalating to human
-  • Raw audio never leaves the CHV device — only extracted JSON is transmitted
-  • Always confirm encounter_id to the CHV verbally after storage
-  • Always speak in the CHV's detected language (Dholuo/Swahili/Kikuyu/Somali/English)
-  • Human gate is mandatory for RED and YELLOW — never skip it
-  • Follow-ups are scheduled automatically — never skip schedule_follow_ups
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONVERSATIONAL INTELLIGENCE (Telegram + Web)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When a CHV sends a text message through Telegram:
+  REASON: Understand the intent — is this a report, a question, a follow-up?
+  THINK: Parse the message. Identify: syndrome clues, urgency words,
+         location mentions, patient details (age, sex, symptoms).
+  RESPOND in the CHV's language (Dholuo/Swahili/Kikuyu/Somali/English).
+  ACT accordingly:
+    - Symptom report → start encounter lifecycle
+    - Protocol question → get_response_protocol
+    - Follow-up report → complete_patient_follow_up
+    - Status question → get_county_follow_up_summary
+
+RESPONSE FORMAT for CHVs (always):
+  ✅/❌/⚠️ Status indicator
+  Brief plain-language explanation (1-3 sentences)
+  Next action if any (e.g., "Patient referred. Confirm receipt at facility.")
+  Session ID for tracking (e.g., "Session: tg-12345")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INVARIANT RULES — NEVER VIOLATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Retry every failed tool call ONCE before giving up
+• Never lose encounter data — always queue_offline_encounter on failure
+• Human gate is mandatory for RED and YELLOW — never skip
+• Always speak in the CHV's detected language
+• Always include session_id in every response to CHV
+• Contact tracing is automatic for RED — the swarm handles it
 """,
     tools=[
         # ── Encounter lifecycle ───────────────────────────────────────────────
@@ -670,7 +791,7 @@ INVARIANT RULES — NEVER VIOLATE:
     ],
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.1,
-        max_output_tokens=1024,
+        max_output_tokens=2048,  # increased for ReAct reasoning chains
     ),
 )
 
@@ -680,12 +801,19 @@ INVARIANT RULES — NEVER VIOLATE:
 
 
 def build_orchestrator_run_config(voice_name: str = "Aoede") -> RunConfig:
-    """Build RunConfig with TTS for spoken CHV feedback."""
+    """
+    Build RunConfig with TTS for spoken CHV feedback via Gemini Live API.
+    response_modalities=["AUDIO"] tells the Live session to speak responses
+    rather than return text — the CHV hears the AI's reply directly.
+    """
     voice_config = genai_types.VoiceConfig(
         prebuilt_voice_config=genai_types.PrebuiltVoiceConfigDict(voice_name=voice_name)
     )
     speech_config = genai_types.SpeechConfig(voice_config=voice_config)
-    return RunConfig(speech_config=speech_config)
+    return RunConfig(
+        speech_config=speech_config,
+        response_modalities=["AUDIO"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -703,6 +831,7 @@ _runner = Runner(
 # ── Agentic message handler ───────────────────────────────────────────────────
 # Per-user persistent sessions so Gemini maintains conversation context
 # across multiple Telegram messages from the same CHW.
+
 
 async def run_agentic_message(
     user_id: str,
@@ -747,6 +876,7 @@ async def run_agentic_message(
 
     return final_text or "✅ Request processed."
 
+
 # ---------------------------------------------------------------------------
 # FastAPI app — Agent Runtime HTTP interface
 # ---------------------------------------------------------------------------
@@ -757,17 +887,55 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def _lifespan(fastapi_app):
     """Start the autonomous swarm on startup; shut it down cleanly on exit."""
-    logger.info("[Orchestrator] 🚀 Starting SihaLink — Kenya National Disease Surveillance")
+    logger.info(
+        "[Orchestrator] 🚀 Starting SihaLink — Kenya National Disease Surveillance"
+    )
     try:
-        from agents.data.agent import create_vector_search_index
+        from agents.data.agent import (
+            create_vector_search_index,
+            load_disease_references,
+            seed_clinical_dataset,
+        )
+
         idx_res = create_vector_search_index()
         logger.info(f"[Orchestrator] Vector Index Status: {idx_res}")
+
+        # Load disease reference database on startup
+        disease_res = load_disease_references()
+        logger.info(
+            f"[Orchestrator] Disease Reference Load: {disease_res.get('diseases_loaded', 0)} diseases loaded"
+        )
+        if disease_res.get("errors"):
+            logger.warning(
+                f"[Orchestrator] Disease load errors: {disease_res['errors']}"
+            )
+
+        # Seed clinical dataset with Voyage AI embeddings
+        dataset_res = seed_clinical_dataset()
+        logger.info(
+            f"[Orchestrator] Clinical Dataset Seeded: {dataset_res.get('encounters_loaded', 0)} encounters with Voyage AI embeddings"
+        )
+        if dataset_res.get("errors"):
+            logger.warning(
+                f"[Orchestrator] Dataset seed errors: {dataset_res['errors']}"
+            )
     except Exception as e:
-        logger.error(f"[Orchestrator] Vector Index Error: {e}")
+        logger.error(f"[Orchestrator] Startup Error: {e}")
     await swarm.start()
+    # Register SSE broadcaster — relay every swarm bus event to connected browsers
+    swarm.bus.subscribe("*", _sse_swarm_subscriber)
+    logger.info("[Orchestrator] 📡 SSE broadcast channel active (/swarm/stream)")
     yield
     logger.info("[Orchestrator] 🛑 Shutting down SihaLink swarm")
     await swarm.stop()
+
+    # Flush and shut down OTel providers to prevent
+    # "Task was destroyed but it is pending!" from aiohttp/genai client
+    from .telemetry import graceful_shutdown as _telemetry_shutdown
+    _telemetry_shutdown()
+
+    # Give any lingering aiohttp connections a moment to close gracefully
+    await asyncio.sleep(0.25)
 
 
 app = FastAPI(title="SihaLink Orchestrator", lifespan=_lifespan)
@@ -776,23 +944,43 @@ app = FastAPI(title="SihaLink Orchestrator", lifespan=_lifespan)
 if _telemetry_active:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         FastAPIInstrumentor.instrument_app(app)
         logger.info("[Telemetry] FastAPI auto-instrumentation active")
     except ImportError:
         pass
+
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# In production (Cloud Run), the Angular app is served from Firebase Hosting
+# (*.web.app / *.firebaseapp.com) and makes requests to this service.
+# The wildcard "*" is kept for dev convenience; restrict in prod via
+# ALLOWED_ORIGINS env var if needed.
+_ALLOWED_ORIGINS = [o.strip() for o in os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:4200,http://localhost:5173,http://localhost:3000,"
+    "https://*.web.app,https://*.firebaseapp.com",
+).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://*.web.app",
-        "https://*.firebaseapp.com",
-        "*",
-    ],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.(web\.app|firebaseapp\.com|run\.app)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Serve Angular static files in production ──────────────────────────────────
+# When the container includes frontend/dist/frontend/browser (built in Docker
+# Stage 2) we serve the Angular SPA from /static.
+# API routes take precedence; the SPA catch-all is registered last.
+import pathlib as _pathlib
+_STATIC_DIR = _pathlib.Path("/app/static")
+if _STATIC_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    # Mount at a non-conflicting prefix first; the catch-all is added after
+    # all API routes are registered (see bottom of file).
+    logger.info("[Orchestrator] Serving Angular SPA from /app/static")
 
 
 @app.get("/health")
@@ -800,6 +988,8 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint - shows status of all services."""
     mongodb_status = "connected" if data_agent.connected else "disconnected"
+    gemini_key_set = bool(os.getenv("GEMINI_API_KEY"))
+    maps_key_set = bool(os.getenv("GOOGLE_MAPS_API_KEY"))
 
     return {
         "status": "ok",
@@ -814,6 +1004,22 @@ async def health_check():
             },
             "orchestrator": "ready",
             "api": "online",
+            "gemini": {
+                "status": "configured" if gemini_key_set else "not_configured",
+                "warning": (
+                    "GEMINI_API_KEY not set - audio extraction will use mock data"
+                    if not gemini_key_set
+                    else None
+                ),
+            },
+            "maps": {
+                "status": "configured" if maps_key_set else "not_configured",
+                "warning": (
+                    "GOOGLE_MAPS_API_KEY not set - location enrichment disabled"
+                    if not maps_key_set
+                    else None
+                ),
+            },
         },
     }
 
@@ -824,8 +1030,9 @@ async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundT
     """
     Unified encounter start — accepts audio, web-form, or Telegram payloads.
     Kicks off the full state-machine lifecycle as a background task.
+    Uses WorkflowState (MongoDB-persistent) and ReAct pipeline pattern.
 
-    Body (all optional except session_id):
+    Body:
         session_id       — required
         audio_base64     — raw audio for voice intake
         form_data        — structured clinical form (web UI)
@@ -840,15 +1047,26 @@ async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundT
     coords = {"lat": payload.get("latitude", 0.0), "lng": payload.get("longitude", 0.0)}
     form_data = payload.get("form_data")
     telegram_payload = payload.get("telegram_payload")
+    chw_id = (telegram_payload or {}).get("chw_id", payload.get("chw_id", "unknown"))
 
-    # Determine intake source for tracing
     source = "audio"
     if form_data:
         source = "form"
     elif telegram_payload:
         source = "telegram"
 
-    # Custom Dynatrace span — marks the start of the full encounter pipeline
+    # ── IBM Agentic Pattern: Workflow State Persistence ───────────────────────
+    # Create durable state in MongoDB — survives server restarts mid-pipeline
+    _workflow_state.create(
+        session_id=session_id,
+        source=source,
+        chw_id=chw_id,
+        county=(telegram_payload or {}).get("county", "Unknown"),
+    )
+    _workflow_state.transition(
+        session_id, "INTAKE", note=f"Encounter started via {source}"
+    )
+
     with _tracer.start_as_current_span("encounter.start") as span:
         span.set_attribute("encounter.session_id", session_id)
         span.set_attribute("encounter.source", source)
@@ -865,6 +1083,103 @@ async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundT
         )
 
     return {"status": "processing", "session_id": session_id, "source": source}
+
+
+@app.get("/encounters")
+async def list_encounters(
+    county:  Optional[str] = None,
+    syndrome: Optional[str] = None,
+    triage:  Optional[str] = None,
+    limit:   int = 50,
+    skip:    int = 0,
+):
+    """
+    List persisted encounters from MongoDB with optional filters.
+    Used by the Angular Encounters component to show seeded/live data.
+
+    Query params:
+      county   — filter by admin_hierarchy.county
+      syndrome — filter by extracted.syndrome
+      triage   — filter by extracted.triage_color (RED|YELLOW|GREEN)
+      limit    — max results (default 50)
+      skip     — pagination offset
+    """
+    if not data_agent.connected:
+        return {"encounters": [], "count": 0, "status": "degraded"}
+
+    from pymongo import DESCENDING as _DESC
+    query: Dict[str, Any] = {}
+    if county:
+        query["admin_hierarchy.county"] = county
+    if syndrome:
+        query["extracted.syndrome"] = syndrome
+    if triage:
+        query["extracted.triage_color"] = triage.upper()
+
+    try:
+        docs = list(
+            data_agent.db.encounters.find(query, {"_id": 0, "embedding": 0})
+            .sort("timestamp", _DESC)
+            .skip(skip)
+            .limit(limit)
+        )
+        total = data_agent.db.encounters.count_documents(query)
+        # Convert datetime to ISO string for JSON serialisation
+        for doc in docs:
+            if hasattr(doc.get("timestamp"), "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        return {"encounters": docs, "count": total, "limit": limit, "skip": skip}
+    except Exception as exc:
+        logger.error("GET /encounters failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/encounters/{encounter_id}")
+async def get_encounter(encounter_id: str):
+    """
+    Get a single encounter by encounter_id.
+    Used by the Angular Encounters component View Details panel.
+    """
+    if not data_agent.connected:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        doc = data_agent.db.encounters.find_one(
+            {"encounter_id": encounter_id}, {"_id": 0, "embedding": 0}
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Encounter {encounter_id} not found")
+        if hasattr(doc.get("timestamp"), "isoformat"):
+            doc["timestamp"] = doc["timestamp"].isoformat()
+        return doc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("GET /encounters/%s failed: %s", encounter_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/encounter/{session_id}/workflow")
+async def get_workflow_state_endpoint(session_id: str):
+    """
+    Get the persistent workflow state for an encounter including ReAct history.
+    Shows each pipeline stage, reflection scores, and any errors.
+    """
+    state = _workflow_state.get(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Workflow {session_id} not found")
+    return state
+
+
+@app.get("/workflows/incomplete")
+async def list_incomplete_workflows(older_than_minutes: int = 30):
+    """
+    List workflows stuck in non-terminal states — for monitoring and recovery.
+    Useful to find encounters that need manual intervention.
+    """
+    return {
+        "incomplete": _workflow_state.list_incomplete(older_than_minutes),
+        "older_than_minutes": older_than_minutes,
+    }
 
 
 @app.get("/encounter/{session_id}/status")
@@ -946,7 +1261,10 @@ async def respond_to_gate(payload: Dict[str, Any]):
 
     if state == EncounterState.CLARIFICATION_GATE:
         if not text:
-            return {"status": "error", "message": "Text answer required for clarification gate"}
+            return {
+                "status": "error",
+                "message": "Text answer required for clarification gate",
+            }
         future.set_result(text)
         return {
             "status": "resolved",
@@ -956,7 +1274,10 @@ async def respond_to_gate(payload: Dict[str, Any]):
 
     elif state == EncounterState.DECISION_GATE:
         if confirm is None:
-            return {"status": "error", "message": "confirm (bool) required for decision gate"}
+            return {
+                "status": "error",
+                "message": "confirm (bool) required for decision gate",
+            }
         future.set_result(bool(confirm))
         return {
             "status": "resolved",
@@ -990,23 +1311,27 @@ async def api_route_to_intake(payload: Dict[str, Any]):
 @app.post("/intake/form")
 async def api_intake_form(payload: Dict[str, Any]):
     """Accept a clinical intake from the Angular web form."""
-    session_id = payload.get("session_id", f"form-{int(asyncio.get_event_loop().time())}")
-    form_data  = payload.get("form_data", payload)   # allow flat or nested
-    extracted  = await intake_agent.process_form(form_data, session_id)
+    session_id = payload.get(
+        "session_id", f"form-{int(asyncio.get_event_loop().time())}"
+    )
+    form_data = payload.get("form_data", payload)  # allow flat or nested
+    extracted = await intake_agent.process_form(form_data, session_id)
     return {"session_id": session_id, "extracted": extracted}
 
 
 @app.post("/intake/telegram")
 async def api_intake_telegram(payload: Dict[str, Any]):
     """Accept a clinical intake from a Telegram CHV message."""
-    chw_id      = payload.get("chw_id", "unknown")
-    session_id  = payload.get("session_id", f"tg-{chw_id}-{int(asyncio.get_event_loop().time())}")
-    extracted   = await intake_agent.process_telegram(
-        message_text   = payload.get("message_text"),
-        audio_b64      = payload.get("audio_base64"),
-        chw_id         = chw_id,
-        session_id     = session_id,
-        language_hint  = payload.get("language_hint"),
+    chw_id = payload.get("chw_id", "unknown")
+    session_id = payload.get(
+        "session_id", f"tg-{chw_id}-{int(asyncio.get_event_loop().time())}"
+    )
+    extracted = await intake_agent.process_telegram(
+        message_text=payload.get("message_text"),
+        audio_b64=payload.get("audio_base64"),
+        chw_id=chw_id,
+        session_id=session_id,
+        language_hint=payload.get("language_hint"),
     )
     return {"session_id": session_id, "extracted": extracted}
 
@@ -1015,8 +1340,10 @@ async def api_intake_telegram(payload: Dict[str, Any]):
 async def api_intake_agent(payload: Dict[str, Any]):
     """Accept a clinical intake forwarded from another SihaLink agent."""
     source_agent = payload.get("source_agent", "unknown")
-    session_id   = payload.get("session_id", f"agent-{int(asyncio.get_event_loop().time())}")
-    extracted    = await intake_agent.process_from_agent(payload, source_agent, session_id)
+    session_id = payload.get(
+        "session_id", f"agent-{int(asyncio.get_event_loop().time())}"
+    )
+    extracted = await intake_agent.process_from_agent(payload, source_agent, session_id)
     return {"session_id": session_id, "extracted": extracted}
 
 
@@ -1066,13 +1393,16 @@ async def api_route_to_notify(payload: Dict[str, Any]):
 async def get_recipients():
     return []
 
+
 @app.post("/tool/register_recipient")
 async def api_register_recipient(payload: Dict[str, Any]):
     return {"status": "ok", "recipient": payload}
 
+
 @app.get("/notifications/encounter/{encounter_id}")
 async def get_notification_history(encounter_id: str):
     return {"history": []}
+
 
 @app.get("/notifications/{notification_id}")
 async def get_notification_status(notification_id: str):
@@ -1196,8 +1526,6 @@ async def api_process_offline_queue():
     return await orchestrator.process_offline_queue()
 
 
-
-
 @app.get("/tool/follow_ups/{chw_id}")
 async def api_get_chw_follow_ups(chw_id: str, overdue_only: bool = False):
     """Get pending follow-up tasks for a CHW."""
@@ -1211,9 +1539,9 @@ async def api_get_chw_follow_ups(chw_id: str, overdue_only: bool = False):
 async def api_get_pending_follow_ups(payload: Dict[str, Any] = {}):
     """Get all pending follow-ups for a county (supervisor view)."""
     from ..data.agent import get_pending_follow_ups
+
     tasks = get_pending_follow_ups(
-        county=payload.get("county"),
-        overdue_only=payload.get("overdue_only", False)
+        county=payload.get("county"), overdue_only=payload.get("overdue_only", False)
     )
     return {"follow_ups": tasks, "count": len(tasks)}
 
@@ -1290,6 +1618,7 @@ async def api_search_protocols(payload: Dict[str, Any]):
 async def api_list_protocols(payload: Dict[str, Any] = {}):
     """List all active protocols, optionally filtered by county."""
     from ..data.agent import list_protocols
+
     return list_protocols(county=payload.get("county"))
 
 
@@ -1359,7 +1688,9 @@ async def api_cross_county_spread(payload: Dict[str, Any]):
 
     return detect_cross_county_spread(syndrome, payload.get("hours", 48))
 
+
 # ── Per-agent health checks ───────────────────────────────────────────────────
+
 
 @app.get("/health/intake")
 async def health_intake():
@@ -1417,13 +1748,17 @@ async def health_surveillance():
         "agent": "surveillance",
         "mongodb_connected": mongodb_ok,
         "capabilities": [
-            "outbreak_detection", "silent_pandemic", "cross_county_spread",
-            "protocol_formulation", "chw_outreach_gaps",
+            "outbreak_detection",
+            "silent_pandemic",
+            "cross_county_spread",
+            "protocol_formulation",
+            "chw_outreach_gaps",
         ],
     }
 
 
 # ── Geo tool endpoints ────────────────────────────────────────────────────────
+
 
 @app.post("/tool/find_nearest_facilities")
 async def api_find_nearest_facilities(payload: Dict[str, Any]):
@@ -1433,6 +1768,7 @@ async def api_find_nearest_facilities(payload: Dict[str, Any]):
     if latitude is None or longitude is None:
         raise HTTPException(status_code=400, detail="latitude and longitude required")
     from agents.geo.agent import find_nearest_facilities
+
     facilities = find_nearest_facilities(float(latitude), float(longitude))
     return {"facilities": facilities, "count": len(facilities)}
 
@@ -1445,11 +1781,13 @@ async def api_get_admin_hierarchy(payload: Dict[str, Any]):
     if latitude is None or longitude is None:
         raise HTTPException(status_code=400, detail="latitude and longitude required")
     from agents.geo.agent import get_admin_hierarchy
+
     hierarchy = get_admin_hierarchy(float(latitude), float(longitude))
     return hierarchy
 
 
 # ── Surveillance dashboard ────────────────────────────────────────────────────
+
 
 @app.get("/surveillance/dashboard")
 async def surveillance_dashboard(county: Optional[str] = None):
@@ -1482,11 +1820,11 @@ async def api_vector_search(payload: Dict[str, Any]):
     if not query:
         raise HTTPException(status_code=400, detail="query required")
     results = data_agent.vector_search_encounters(
-        query_text     = query,
-        county         = payload.get("county"),
-        syndrome       = payload.get("syndrome"),
-        limit          = payload.get("limit", 10),
-        num_candidates = payload.get("num_candidates", 100),
+        query_text=query,
+        county=payload.get("county"),
+        syndrome=payload.get("syndrome"),
+        limit=payload.get("limit", 10),
+        num_candidates=payload.get("num_candidates", 100),
     )
     return {"results": results, "count": len(results), "query": query}
 
@@ -1508,9 +1846,9 @@ async def api_search_encounters(payload: Dict[str, Any]):
     if not query:
         raise HTTPException(status_code=400, detail="query required")
     results = data_agent.search_encounters(
-        query  = query,
-        county = payload.get("county"),
-        limit  = payload.get("limit", 20),
+        query=query,
+        county=payload.get("county"),
+        limit=payload.get("limit", 20),
     )
     return {"results": results, "count": len(results)}
 
@@ -1522,10 +1860,10 @@ async def api_search_alerts(payload: Dict[str, Any]):
     if not query:
         raise HTTPException(status_code=400, detail="query required")
     results = data_agent.search_alerts(
-        query  = query,
-        county = payload.get("county"),
-        status = payload.get("status", "active"),
-        limit  = payload.get("limit", 20),
+        query=query,
+        county=payload.get("county"),
+        status=payload.get("status", "active"),
+        limit=payload.get("limit", 20),
     )
     return {"results": results, "count": len(results)}
 
@@ -1534,7 +1872,7 @@ async def api_search_alerts(payload: Dict[str, Any]):
 async def api_update_referral_status(payload: Dict[str, Any]):
     """Update a patient referral status (called from Telegram accept/redirect buttons)."""
     referral_id = payload.get("referral_id")
-    status      = payload.get("status")
+    status = payload.get("status")
     if not referral_id or not status:
         raise HTTPException(status_code=400, detail="referral_id and status required")
     return data_agent.update_referral_status_sync(
@@ -1546,14 +1884,16 @@ async def api_update_referral_status(payload: Dict[str, Any]):
 async def api_query_referrals(payload: Dict[str, Any] = {}):
     """Query referrals."""
     from ..data.agent import query_referrals
+
     return query_referrals(
         county=payload.get("county"),
         status=payload.get("status"),
-        limit=payload.get("limit", 20)
+        limit=payload.get("limit", 20),
     )
 
 
 # ── Swarm control & status routes ─────────────────────────────────────────────
+
 
 @app.get("/swarm/status")
 async def swarm_status():
@@ -1563,13 +1903,21 @@ async def swarm_status():
     """
     base = swarm.get_swarm_status()
     base["agents"] = {
-        "intake":       {"status": "ok"},
-        "geo":          {"status": "ok" if bool(os.getenv("GOOGLE_MAPS_API_KEY")) else "degraded"},
-        "data":         {"status": "ok" if data_agent.connected else "degraded",
-                         "mongodb_connected": data_agent.connected},
-        "notify":       {"status": "ok" if bool(os.getenv("TELEGRAM_BOT_TOKEN")) else "degraded"},
+        "intake": {"status": "ok"},
+        "geo": {
+            "status": "ok" if bool(os.getenv("GOOGLE_MAPS_API_KEY")) else "degraded"
+        },
+        "data": {
+            "status": "ok" if data_agent.connected else "degraded",
+            "mongodb_connected": data_agent.connected,
+        },
+        "notify": {
+            "status": "ok" if bool(os.getenv("TELEGRAM_BOT_TOKEN")) else "degraded"
+        },
         "surveillance": {"status": "ok" if data_agent.connected else "degraded"},
-        "language":     {"status": "ok" if bool(os.getenv("GEMINI_API_KEY")) else "degraded"},
+        "language": {
+            "status": "ok" if bool(os.getenv("GEMINI_API_KEY")) else "degraded"
+        },
     }
     return base
 
@@ -1583,6 +1931,7 @@ async def swarm_trigger_outbreak(payload: Dict[str, Any] = {}):
     county = payload.get("county")
     if county:
         from agents.surveillance.agent import run_outbreak_detection
+
         coords = swarm.active_counties.get(county, {"lat": 0.0, "lng": 0.0})
         result = run_outbreak_detection(county, coords["lat"], coords["lng"])
         for alert in result.get("alerts", []):
@@ -1618,20 +1967,202 @@ async def swarm_trigger_offline_sync():
 
 @app.get("/swarm/events")
 async def swarm_events(topic: Optional[str] = None, limit: int = 50):
-    """Return recent swarm events for the dashboard event log."""
+    """Return recent swarm events for the dashboard event log (snapshot)."""
     return {"events": swarm.bus.recent(topic=topic, limit=limit)}
+
+
+# ── SSE broadcast manager ─────────────────────────────────────────────────────
+# Holds a set of active SSE client queues. When any swarm event fires, it is
+# pushed to every connected browser in real time.
+
+import asyncio
+from typing import Set
+from fastapi.responses import StreamingResponse
+
+
+class _SSEBroadcastManager:
+    """Fan-out broadcaster: one swarm event → every connected SSE client."""
+
+    def __init__(self):
+        self._queues: Set[asyncio.Queue] = set()
+
+    def add_client(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._queues.add(q)
+        return q
+
+    def remove_client(self, q: asyncio.Queue):
+        self._queues.discard(q)
+
+    async def broadcast(self, event_data: str):
+        dead = set()
+        for q in list(self._queues):
+            try:
+                q.put_nowait(event_data)
+            except asyncio.QueueFull:
+                dead.add(q)
+        for q in dead:
+            self._queues.discard(q)
+
+    @property
+    def client_count(self) -> int:
+        return len(self._queues)
+
+
+_sse_manager = _SSEBroadcastManager()
+
+
+async def _sse_swarm_subscriber(event) -> None:
+    """
+    Global swarm bus subscriber — relays every event to:
+      1. SSE clients (browser dashboards)
+      2. Telegram channels via /notify/broadcast (for significant alerts)
+    """
+    import json, httpx
+
+    BROADCAST_TOPICS = {
+        "alert.detected",
+        "alert.silent_pandemic",
+        "alert.cross_county_spread",
+        "surveillance.escalation_needed",
+        "contact_trace.contact_confirmed",
+        "gap.chw_outreach",
+    }
+
+    skip_topics = {"task.chk_heartbeat"}
+    if event.topic in skip_topics:
+        return
+
+    # ── Fan out to SSE clients ────────────────────────────────────────────────
+    try:
+        payload_safe = {}
+        if isinstance(event.payload, dict):
+            payload_safe = {
+                k: v
+                for k, v in event.payload.items()
+                if isinstance(v, (str, int, float, bool, list, type(None)))
+            }
+        data = json.dumps(
+            {
+                "topic": event.topic,
+                "source": event.source,
+                "ts": event.ts,
+                "payload": payload_safe,
+            },
+            default=str,
+        )
+        await _sse_manager.broadcast(f"data: {data}\n\n")
+    except Exception as exc:
+        logger.debug("SSE broadcast error: %s", exc)
+
+    # ── Fan out to Telegram channels for significant events ───────────────────
+    if event.topic not in BROADCAST_TOPICS:
+        return
+
+    try:
+        p = event.payload if isinstance(event.payload, dict) else {}
+        syndrome = p.get("syndrome", "")
+        county = p.get("county") or (p.get("location") or {}).get("county", "")
+        risk = p.get("risk_level") or p.get("alert_level", "")
+        escalation = p.get("escalation_level", "")
+
+        topic_titles = {
+            "alert.detected": f"🚨 Outbreak Alert: {syndrome.upper() or 'UNKNOWN'}",
+            "alert.silent_pandemic": f"🌊 Silent Pandemic: {syndrome.upper() or 'UNKNOWN'}",
+            "alert.cross_county_spread": f"🔴 Cross-County Spread: {syndrome.upper() or 'UNKNOWN'}",
+            "surveillance.escalation_needed": "🔴 NATIONAL ESCALATION",
+            "contact_trace.contact_confirmed": "⚠️ Contact Confirmed as New Case",
+            "gap.chw_outreach": f"👥 CHW Outreach Gap: {county}",
+        }
+        title = topic_titles.get(event.topic, event.topic)
+
+        messages = {
+            "alert.detected": f"{county} — {p.get('count','?')} cases. +{p.get('percent_above_baseline',0)}% above baseline.",
+            "alert.silent_pandemic": f"{county} — persistent upward trend over {p.get('weeks_observed','?')} weeks.",
+            "alert.cross_county_spread": f"{p.get('counties_count','?')} counties affected. Escalation: {escalation or 'REGIONAL'}.",
+            "surveillance.escalation_needed": f"Cross-county syndromes: {list((p.get('cross_county_syndromes') or {}).keys())}",
+            "contact_trace.contact_confirmed": f"Trace {p.get('trace_id','')} — secondary trace initiated.",
+            "gap.chw_outreach": f"{p.get('total_gap_wards','?')} wards with zero submissions.",
+        }
+        message = messages.get(event.topic, str(p)[:200])
+
+        broadcast_payload = {
+            "topic": event.topic,
+            "title": title,
+            "message": message,
+            "county": county or "NATIONAL",
+            "syndrome": syndrome,
+            "risk_level": risk,
+            "escalation_level": escalation,
+            "alert_id": p.get("alert_id", ""),
+        }
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            await client.post(
+                f"{NOTIFY_BASE}/notify/broadcast",
+                json=broadcast_payload,
+            )
+    except Exception as exc:
+        logger.debug("Telegram broadcast from SSE failed (non-fatal): %s", exc)
+
+
+@app.get("/swarm/stream")
+async def swarm_stream(request: Request):
+    """
+    Server-Sent Events endpoint — pushes ALL swarm events to the browser in real time.
+
+    Connect from Angular with:
+        const es = new EventSource('/swarm/stream');
+        es.onmessage = (e) => console.log(JSON.parse(e.data));
+
+    Events include: alert.detected, alert.silent_pandemic, encounter.stored,
+    contact_trace.initiated, surveillance.escalation_needed, task.*.complete, etc.
+    """
+    import json
+
+    queue = _sse_manager.add_client()
+
+    async def event_generator():
+        # Send a hello ping so the browser knows the connection is live
+        yield f"data: {json.dumps({'topic': 'connected', 'source': 'server', 'ts': __import__('datetime').datetime.utcnow().isoformat()})}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    yield data
+                except asyncio.TimeoutError:
+                    # Keep-alive ping every 25s to prevent proxy timeouts
+                    yield ": keepalive\n\n"
+        finally:
+            _sse_manager.remove_client(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable Nginx buffering
+        },
+    )
 
 
 @app.post("/swarm/counties/add")
 async def swarm_add_county(payload: Dict[str, Any]):
     """Add a county to the active surveillance scope."""
     county = payload.get("county")
-    lat    = payload.get("lat", 0.0)
-    lng    = payload.get("lng", 0.0)
+    lat = payload.get("lat", 0.0)
+    lng = payload.get("lng", 0.0)
     if not county:
         raise HTTPException(status_code=400, detail="county required")
     swarm.add_county(county, lat, lng)
-    return {"status": "added", "county": county, "total_counties": len(swarm.active_counties)}
+    return {
+        "status": "added",
+        "county": county,
+        "total_counties": len(swarm.active_counties),
+    }
 
 
 @app.delete("/swarm/counties/{county}")
@@ -1642,10 +2173,12 @@ async def swarm_remove_county(county: str):
 
 
 # ── Import needed for swarm event publishing in routes above ──────────────────
-from agents.swarm import SwarmEvent  # noqa: E402 — after app definition to avoid circular
-
+from agents.swarm import (
+    SwarmEvent,
+)  # noqa: E402 — after app definition to avoid circular
 
 # ── Agentic endpoints — ADK runner ────────────────────────────────────────────
+
 
 @app.post("/encounter/respond")
 async def api_encounter_respond(payload: Dict[str, Any]):
@@ -1661,8 +2194,8 @@ async def api_encounter_respond(payload: Dict[str, Any]):
       text     — The user's message text
       session_id — Optional explicit session (defaults to tg-{chat_id})
     """
-    chat_id    = str(payload.get("chat_id", "unknown"))
-    text       = payload.get("text", "").strip()
+    chat_id = str(payload.get("chat_id", "unknown"))
+    text = payload.get("text", "").strip()
     session_id = payload.get("session_id")
 
     if not text:
@@ -1675,9 +2208,9 @@ async def api_encounter_respond(payload: Dict[str, Any]):
             session_id=session_id,
         )
         return {
-            "status":     "resolved",
+            "status": "resolved",
             "session_id": session_id or f"tg-{chat_id}",
-            "response":   response,
+            "response": response,
         }
     except Exception as exc:
         logger.error("Agentic message failed for %s: %s", chat_id, exc)
@@ -1696,8 +2229,8 @@ async def api_adk_run(payload: Dict[str, Any]):
       message    — Natural language instruction
       session_id — Optional session ID for conversation continuity
     """
-    user_id    = payload.get("user_id", "api-user")
-    message    = payload.get("message", "").strip()
+    user_id = payload.get("user_id", "api-user")
+    message = payload.get("message", "").strip()
     session_id = payload.get("session_id")
 
     if not message:
@@ -1710,9 +2243,9 @@ async def api_adk_run(payload: Dict[str, Any]):
             session_id=session_id,
         )
         return {
-            "status":     "ok",
+            "status": "ok",
             "session_id": session_id or f"session-{user_id}",
-            "response":   response,
+            "response": response,
         }
     except Exception as exc:
         logger.error("ADK run failed: %s", exc)
@@ -1731,9 +2264,9 @@ async def api_research_protocol(payload: Dict[str, Any]):
       alert_level   — RED | YELLOW | GREEN (default: YELLOW)
       force_refresh — Re-research even if protocol exists (default: false)
     """
-    syndrome      = payload.get("syndrome")
-    county        = payload.get("county", "all")
-    alert_level   = payload.get("alert_level", "YELLOW")
+    syndrome = payload.get("syndrome")
+    county = payload.get("county", "all")
+    alert_level = payload.get("alert_level", "YELLOW")
     force_refresh = payload.get("force_refresh", False)
 
     if not syndrome:
@@ -1743,6 +2276,7 @@ async def api_research_protocol(payload: Dict[str, Any]):
         from agents.surveillance.protocol_agent import (
             research_and_formulate_protocol_sync,
         )
+
         result = research_and_formulate_protocol_sync(
             syndrome, county, alert_level, force_refresh
         )
@@ -1751,7 +2285,9 @@ async def api_research_protocol(payload: Dict[str, Any]):
         logger.error("Protocol research endpoint failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
+
 # ── Contact Tracing endpoints ─────────────────────────────────────────────────
+
 
 @app.post("/tool/trace_contacts")
 async def api_trace_contacts(payload: Dict[str, Any]):
@@ -1765,7 +2301,7 @@ async def api_trace_contacts(payload: Dict[str, Any]):
       initiated_by  — user ID or 'system' (optional)
     """
     encounter_id = payload.get("encounter_id")
-    alert_id     = payload.get("alert_id")
+    alert_id = payload.get("alert_id")
     initiated_by = payload.get("initiated_by", "api")
 
     if not encounter_id and not alert_id:
@@ -1788,11 +2324,13 @@ async def api_trace_contacts(payload: Dict[str, Any]):
 
     # Publish event so Notify Agent can dispatch CHW tasks
     if result.get("trace_id") and result.get("contacts_identified", 0) > 0:
-        await swarm.bus.publish(SwarmEvent(
-            "contact_trace.contacts_identified",
-            result,
-            source="orchestrator",
-        ))
+        await swarm.bus.publish(
+            SwarmEvent(
+                "contact_trace.contacts_identified",
+                result,
+                source="orchestrator",
+            )
+        )
 
     return result
 
@@ -1809,6 +2347,7 @@ async def api_trace_status(trace_id: str):
       - tier_histogram: HOUSEHOLD / COMMUNITY / FACILITY / UNKNOWN counts
     """
     from agents.contact_tracing.agent import get_trace_status
+
     result = get_trace_status(trace_id)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -1829,9 +2368,9 @@ async def api_update_contact_status(payload: Dict[str, Any]):
       notes             — CHW assessment notes (optional)
       chw_id            — CHW completing the visit (optional)
     """
-    trace_id   = payload.get("trace_id")
+    trace_id = payload.get("trace_id")
     contact_id = payload.get("contact_id")
-    status     = payload.get("status")
+    status = payload.get("status")
 
     if not trace_id or not contact_id or not status:
         raise HTTPException(
@@ -1847,41 +2386,45 @@ async def api_update_contact_status(payload: Dict[str, Any]):
         )
 
     from agents.contact_tracing.agent import update_contact_status
+
     result = update_contact_status(
-        trace_id         = trace_id,
-        contact_id       = contact_id,
-        status           = status,
-        new_encounter_id = payload.get("new_encounter_id"),
-        notes            = payload.get("notes", ""),
-        chw_id           = payload.get("chw_id", "unknown"),
+        trace_id=trace_id,
+        contact_id=contact_id,
+        status=status,
+        new_encounter_id=payload.get("new_encounter_id"),
+        notes=payload.get("notes", ""),
+        chw_id=payload.get("chw_id", "unknown"),
     )
 
     # If a new confirmed case was found, publish event for secondary trace
     if result.get("escalation_triggered") and payload.get("new_encounter_id"):
-        await swarm.bus.publish(SwarmEvent(
-            "contact_trace.contact_confirmed",
-            {
-                "trace_id":          trace_id,
-                "contact_id":        contact_id,
-                "new_encounter_id":  payload["new_encounter_id"],
-            },
-            source="orchestrator",
-        ))
+        await swarm.bus.publish(
+            SwarmEvent(
+                "contact_trace.contact_confirmed",
+                {
+                    "trace_id": trace_id,
+                    "contact_id": contact_id,
+                    "new_encounter_id": payload["new_encounter_id"],
+                },
+                source="orchestrator",
+            )
+        )
 
     return result
 
 
 @app.get("/tool/active_traces")
 async def api_active_traces(
-    county:   Optional[str] = None,
+    county: Optional[str] = None,
     syndrome: Optional[str] = None,
-    limit:    int = 20,
+    limit: int = 20,
 ):
     """
     List all active contact traces with summary statistics.
     Optionally filter by county and/or syndrome.
     """
     from agents.contact_tracing.agent import get_active_traces
+
     return get_active_traces(county=county, syndrome=syndrome, limit=limit)
 
 
@@ -1901,17 +2444,20 @@ async def api_resolve_trace(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="trace_id is required")
 
     from agents.contact_tracing.agent import resolve_trace
+
     result = resolve_trace(
-        trace_id         = trace_id,
-        resolved_by      = payload.get("resolved_by", "system"),
-        resolution_notes = payload.get("resolution_notes", ""),
+        trace_id=trace_id,
+        resolved_by=payload.get("resolved_by", "system"),
+        resolution_notes=payload.get("resolution_notes", ""),
     )
 
-    await swarm.bus.publish(SwarmEvent(
-        "contact_trace.resolved",
-        result,
-        source="orchestrator",
-    ))
+    await swarm.bus.publish(
+        SwarmEvent(
+            "contact_trace.resolved",
+            result,
+            source="orchestrator",
+        )
+    )
     return result
 
 
@@ -1931,26 +2477,61 @@ async def health_contact_tracing():
         ],
     }
 
+
 # ---------------------------------------------------------------------------
 # Agent Observability (Logs)
 # ---------------------------------------------------------------------------
+
 
 @app.get("/swarm/agent_logs")
 async def api_get_agent_logs(session_id: Optional[str] = None, limit: int = 50):
     """Fetch recent vectorized agent decision-making logs."""
     from agents.data.agent import query_agent_logs
+
     try:
         result = query_agent_logs(session_id, limit)
         return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
+
 @app.get("/swarm/agent_logs/search")
 async def api_search_agent_logs(query: str, limit: int = 10):
     """Semantic Vector Search over agent decision logs."""
     from agents.data.agent import search_agent_logs
+
     try:
         result = search_agent_logs(query, limit)
         return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+# ── Static file serving + SPA catch-all (production / Cloud Run) ─────────────
+# Must be registered AFTER all API routes so API paths are not shadowed.
+# The Angular app is built into /app/static by the Docker Stage 2.
+if _STATIC_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    # Serve assets (JS, CSS, images) at /assets/* directly
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_catch_all(full_path: str):
+        """
+        SPA catch-all: serve index.html for any path not matched by an API route.
+        Required for Angular client-side routing (History API).
+        Skip known API path prefixes to avoid shadowing them.
+        """
+        _API_PREFIXES = (
+            "api/", "health", "status", "tool/", "swarm/", "encounter",
+            "intake/", "surveillance/", "geo/", "adk/", "notify/", "workflows",
+        )
+        if full_path.startswith(_API_PREFIXES):
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=404, detail="API route not found")
+
+        index = _STATIC_DIR / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        return {"error": "Frontend not built into this image"}

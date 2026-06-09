@@ -161,6 +161,19 @@ class DataAgent:
                 [("session_id", ASCENDING), ("timestamp", ASCENDING)]
             )
             self.db.agent_logs.create_index([("agent_name", ASCENDING)])
+            
+            # ── disease_reference (comprehensive disease intelligence) ─────────────
+            self.db.disease_reference.create_index(
+                [("disease", ASCENDING)], unique=True
+            )
+            self.db.disease_reference.create_index([("category", ASCENDING)])
+            self.db.disease_reference.create_index([("synonyms", ASCENDING)])
+            
+            # ── data_corrections (track Intake Agent corrections) ───────────────────
+            self.db.data_corrections.create_index(
+                [("session_id", ASCENDING), ("timestamp", DESCENDING)]
+            )
+            self.db.data_corrections.create_index([("correction_reason", ASCENDING)])
 
             logger.info("✅ MongoDB indexes verified across all collections")
         except OperationFailure as exc:

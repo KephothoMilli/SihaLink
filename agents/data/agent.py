@@ -12,7 +12,7 @@ Collections covered:
 
 ADK pattern:
   - root_agent: LlmAgent with 20 function tools
-  - Model: gemini-flash-latest
+  - Model: gemini-3.5-flash
   - All tools are plain sync functions; async DataAgent calls run in
     a ThreadPoolExecutor so the ADK event loop stays healthy.
 """
@@ -20,8 +20,9 @@ ADK pattern:
 import asyncio
 import concurrent.futures
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+import uuid
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -59,7 +60,8 @@ def _run(coro):
 # TOOL GROUP 1 — ENCOUNTERS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def insert_encounter(enriched_encounter: dict) -> dict:
+
+def insert_encounter(enriched_encounter: Dict[str, Any]) -> Dict[str, Any]:
     """
     Insert a geo-enriched clinical encounter into MongoDB.
     Automatically generates a semantic vector embedding (Voyage AI voyage-3
@@ -93,7 +95,7 @@ def insert_encounter(enriched_encounter: dict) -> dict:
         return {"error": str(exc), "status": "failed"}
 
 
-def sync_offline_encounters(encounters: list) -> dict:
+def sync_offline_encounters(encounters: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Batch-insert encounters queued while the CHV device was offline.
     Processes in batches of 50. Generates embeddings for each.
@@ -114,7 +116,7 @@ def sync_offline_encounters(encounters: list) -> dict:
         return {"total": len(encounters), "synced": 0, "errors": len(encounters)}
 
 
-def create_vector_search_index() -> dict:
+def create_vector_search_index() -> Dict[str, Any]:
     """
     Idempotently create the Atlas Vector Search index on encounters.embedding.
     Uses pymongo 4.6+ SearchIndexModel API. Requires MongoDB Atlas M10+ cluster.
@@ -127,6 +129,7 @@ def create_vector_search_index() -> dict:
     try:
         from .index import IndexManager
         from .embedding_service import get_embedding_dim
+
         mgr = IndexManager(_get_client().db)
         dim = get_embedding_dim()
         result = mgr.ensure_all_indexes(embedding_dim=dim)
@@ -140,7 +143,8 @@ def create_vector_search_index() -> dict:
 # TOOL GROUP 2 — ALERTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def query_active_alerts(county: Optional[str] = None) -> dict:
+
+def query_active_alerts(county: Optional[str] = None) -> Dict[str, Any]:
     """
     Query active outbreak alerts from MongoDB, optionally filtered by county.
     Returns the 20 most recent active alerts sorted by timestamp descending.
@@ -161,7 +165,9 @@ def query_active_alerts(county: Optional[str] = None) -> dict:
         return {"alerts": [], "count": 0, "error": str(exc)}
 
 
-def update_alert_status(alert_id: str, status: str, user_id: str = "system") -> dict:
+def update_alert_status(
+    alert_id: str, status: str, user_id: str = "system"
+) -> Dict[str, Any]:
     """
     Update the status of an outbreak alert.
     Used by district officers to acknowledge alerts via Telegram or dashboard.
@@ -181,7 +187,9 @@ def update_alert_status(alert_id: str, status: str, user_id: str = "system") -> 
         return {"error": str(exc)}
 
 
-def resolve_alert(alert_id: str, notes: str = "", user_id: str = "system") -> dict:
+def resolve_alert(
+    alert_id: str, notes: str = "", user_id: str = "system"
+) -> Dict[str, Any]:
     """
     Mark an outbreak alert as resolved with optional resolution notes.
     Records who resolved it and when for the audit trail.
@@ -205,7 +213,8 @@ def resolve_alert(alert_id: str, notes: str = "", user_id: str = "system") -> di
 # TOOL GROUP 3 — REFERRALS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def insert_referral(encounter_doc: dict) -> dict:
+
+def insert_referral(encounter_doc: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create a patient referral record in the dedicated `referrals` collection.
     Called for every RED or YELLOW triage encounter after CHV confirmation.
@@ -227,7 +236,9 @@ def insert_referral(encounter_doc: dict) -> dict:
         return {"error": str(exc), "status": "failed"}
 
 
-def update_referral_status(referral_id: str, status: str, notes: str = "") -> dict:
+def update_referral_status(
+    referral_id: str, status: str, notes: str = ""
+) -> Dict[str, Any]:
     """
     Update the status of a patient referral.
     Called by the receiving facility via Telegram inline keyboard.
@@ -251,7 +262,7 @@ def query_referrals(
     county: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 20,
-) -> dict:
+) -> Dict[str, Any]:
     """
     Query patient referrals with optional county and status filters.
     Used by the dashboard and Telegram /referrals command.
@@ -276,7 +287,8 @@ def query_referrals(
 # TOOL GROUP 4 — FOLLOW-UPS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def schedule_follow_ups(encounter_doc: dict) -> dict:
+
+def schedule_follow_ups(encounter_doc: Dict[str, Any]) -> Dict[str, Any]:
     """
     Auto-schedule patient follow-up tasks for the CHW based on triage color.
     Creates individual follow-up documents in MongoDB with due dates.
@@ -304,7 +316,7 @@ def get_pending_follow_ups(
     chw_id: Optional[str] = None,
     county: Optional[str] = None,
     overdue_only: bool = False,
-) -> dict:
+) -> Dict[str, Any]:
     """
     Retrieve pending follow-up tasks for a CHW or county.
     Used by the Telegram /followup command to show a CHW their task list.
@@ -330,7 +342,7 @@ def complete_follow_up(
     outcome: str,
     notes: str = "",
     chw_id: str = "unknown",
-) -> dict:
+) -> Dict[str, Any]:
     """
     Mark a patient follow-up as completed with clinical outcome.
     Called by the CHV after visiting the patient.
@@ -346,7 +358,9 @@ def complete_follow_up(
         dict with matched_count and modified_count.
     """
     try:
-        return _run(_get_client().complete_follow_up(follow_up_id, outcome, notes, chw_id))
+        return _run(
+            _get_client().complete_follow_up(follow_up_id, outcome, notes, chw_id)
+        )
     except Exception as exc:
         logger.error("complete_follow_up failed: %s", exc)
         return {"error": str(exc)}
@@ -356,7 +370,7 @@ def reschedule_follow_up(
     follow_up_id: str,
     days_from_now: int,
     reason: str = "",
-) -> dict:
+) -> Dict[str, Any]:
     """
     Reschedule a follow-up task to a new date.
     Used when the patient was unavailable or the CHW needs more time.
@@ -371,14 +385,15 @@ def reschedule_follow_up(
     """
     try:
         from datetime import timedelta
-        new_due = datetime.utcnow() + timedelta(days=days_from_now)
+
+        new_due = datetime.now(timezone.utc) + timedelta(days=days_from_now)
         return _run(_get_client().reschedule_follow_up(follow_up_id, new_due, reason))
     except Exception as exc:
         logger.error("reschedule_follow_up failed: %s", exc)
         return {"error": str(exc)}
 
 
-def get_follow_up_summary(county: str) -> dict:
+def get_follow_up_summary(county: str) -> Dict[str, Any]:
     """
     Get follow-up completion statistics for a county.
     Used by the Telegram /status command and the supervisor dashboard.
@@ -393,14 +408,21 @@ def get_follow_up_summary(county: str) -> dict:
         return _get_client().get_follow_up_summary(county)
     except Exception as exc:
         logger.error("get_follow_up_summary failed: %s", exc)
-        return {"county": county, "pending": 0, "completed": 0, "overdue": 0, "error": str(exc)}
+        return {
+            "county": county,
+            "pending": 0,
+            "completed": 0,
+            "overdue": 0,
+            "error": str(exc),
+        }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TOOL GROUP 5 — CHWs
 # ═════════════════════════════════════════════════════════════════════════════
 
-def register_chw(chw_data: dict) -> dict:
+
+def register_chw(chw_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Register or update a Community Health Worker in the MongoDB registry.
     Called when a CHW first uses the Telegram bot (/register command).
@@ -424,7 +446,7 @@ def register_chw(chw_data: dict) -> dict:
         return {"error": str(exc)}
 
 
-def get_chw(chw_id: str) -> dict:
+def get_chw(chw_id: str) -> Dict[str, Any]:
     """
     Retrieve a CHW record by their CHW ID.
 
@@ -446,7 +468,7 @@ def list_chws(
     county: Optional[str] = None,
     ward: Optional[str] = None,
     status: str = "active",
-) -> dict:
+) -> Dict[str, Any]:
     """
     List Community Health Workers filtered by county, ward, and status.
     Used by supervisors to see their team and identify inactive CHWs.
@@ -471,7 +493,8 @@ def list_chws(
 # TOOL GROUP 6 — PROTOCOLS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def upsert_protocol(protocol_doc: dict) -> dict:
+
+def upsert_protocol(protocol_doc: Dict[str, Any]) -> Dict[str, Any]:
     """
     Store or update a WHO/MoH response protocol in MongoDB.
     Called by the Surveillance Agent after formulating a protocol.
@@ -495,7 +518,7 @@ def upsert_protocol(protocol_doc: dict) -> dict:
         return {"error": str(exc)}
 
 
-def get_protocol(syndrome: str, county: Optional[str] = None) -> dict:
+def get_protocol(syndrome: str, county: Optional[str] = None) -> Dict[str, Any]:
     """
     Retrieve the active response protocol for a syndrome.
     Prefers county-specific protocol; falls back to national ('all').
@@ -516,7 +539,7 @@ def get_protocol(syndrome: str, county: Optional[str] = None) -> dict:
         return {"error": str(exc)}
 
 
-def search_protocols(query: str, limit: int = 5) -> dict:
+def search_protocols(query: str, limit: int = 5) -> Dict[str, Any]:
     """
     Full-text search across all protocols using Atlas Search.
     Enables CHWs to find protocols by keyword (e.g., 'ORS', 'dehydration').
@@ -537,7 +560,7 @@ def search_protocols(query: str, limit: int = 5) -> dict:
         return {"protocols": [], "count": 0, "error": str(exc)}
 
 
-def list_protocols(county: Optional[str] = None) -> dict:
+def list_protocols(county: Optional[str] = None) -> Dict[str, Any]:
     """
     List all active response protocols, optionally filtered by county.
     Returns both county-specific and national ('all') protocols.
@@ -560,18 +583,26 @@ def list_protocols(county: Optional[str] = None) -> dict:
 # TOOL GROUP 7 — AGENT LOGS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def insert_agent_log(agent_name: str, step: str, detail: str, level: str, session_id: str) -> dict:
+
+def insert_agent_log(
+    agent_name: str, step: str, detail: str, level: str, session_id: str
+) -> Dict[str, Any]:
     """
     Insert a vectorized agent decision log.
     """
     try:
-        inserted_id = _run(_get_client().insert_agent_log(agent_name, step, detail, level, session_id))
+        inserted_id = _run(
+            _get_client().insert_agent_log(agent_name, step, detail, level, session_id)
+        )
         return {"inserted_id": inserted_id, "status": "stored"}
     except Exception as exc:
         logger.error("insert_agent_log failed: %s", exc)
         return {"error": str(exc), "status": "failed"}
 
-def query_agent_logs(session_id: Optional[str] = None, limit: int = 50) -> dict:
+
+def query_agent_logs(
+    session_id: Optional[str] = None, limit: int = 50
+) -> Dict[str, Any]:
     """Fetch recent agent logs."""
     try:
         results = _get_client().query_agent_logs(session_id, limit)
@@ -580,7 +611,8 @@ def query_agent_logs(session_id: Optional[str] = None, limit: int = 50) -> dict:
         logger.error("query_agent_logs failed: %s", exc)
         return {"logs": [], "count": 0, "error": str(exc)}
 
-def search_agent_logs(query: str, limit: int = 10) -> dict:
+
+def search_agent_logs(query: str, limit: int = 10) -> Dict[str, Any]:
     """Semantic search over agent logs."""
     try:
         results = _get_client().search_agent_logs(query, limit)
@@ -589,7 +621,10 @@ def search_agent_logs(query: str, limit: int = 10) -> dict:
         logger.error("search_agent_logs failed: %s", exc)
         return {"logs": [], "count": 0, "error": str(exc)}
 
-def search_encounters(query: str, county: Optional[str] = None, limit: int = 20) -> list:
+
+def search_encounters(
+    query: str, county: Optional[str] = None, limit: int = 20
+) -> list:
     """Atlas Search full-text search across encounter records."""
     try:
         return _run(_get_client().search_encounters(query, county, limit))
@@ -597,13 +632,17 @@ def search_encounters(query: str, county: Optional[str] = None, limit: int = 20)
         logger.error("search_encounters failed: %s", exc)
         return []
 
-def search_alerts(query: str, county: Optional[str] = None, status: str = "active", limit: int = 20) -> list:
+
+def search_alerts(
+    query: str, county: Optional[str] = None, status: str = "active", limit: int = 20
+) -> list:
     """Atlas Search full-text search across outbreak alerts."""
     try:
         return _run(_get_client().search_alerts(query, county, status, limit))
     except Exception as exc:
         logger.error("search_alerts failed: %s", exc)
         return []
+
 
 def vector_search_protocols(query: str, limit: int = 5) -> list:
     """Semantic vector search across protocols."""
@@ -614,6 +653,413 @@ def vector_search_protocols(query: str, limit: int = 5) -> list:
         return []
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# DISEASE REFERENCE DATABASE (comprehensive disease information for data correction)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def upsert_disease_reference(
+    disease: str, disease_info: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Upsert comprehensive disease reference data to MongoDB.
+    Used by Intake Agent for data correction and validation.
+
+    Args:
+        disease: Disease name (key from disease database)
+        disease_info: Dictionary with clinical information, symptoms, management, etc.
+
+    Returns:
+        dict with upserted_id, status, and timestamp.
+    """
+    try:
+        from agents.data.disease_reference import get_disease_info
+
+        info = disease_info or get_disease_info(disease)
+        if not info:
+            return {"status": "error", "message": f"Disease '{disease}' not found"}
+
+        doc = {
+            "disease": disease.lower(),
+            "name": info.get("name", disease),
+            "category": info.get("category", ""),
+            "synonyms": info.get("synonyms", []),
+            "case_definition": info.get("case_definition", {}),
+            "clinical_features": info.get("clinical_features", {}),
+            "triage": info.get("triage", {}),
+            "management": info.get("management", {}),
+            "risk_factors": info.get("risk_factors", []),
+            "transmission": info.get("transmission", ""),
+            "kenya_context": info.get("kenya_context", {}),
+            "updated_at": datetime.now(timezone.utc),
+        }
+
+        result = _run(
+            _get_client().db.disease_reference.update_one(
+                {"disease": disease.lower()}, {"$set": doc}, upsert=True
+            )
+        )
+
+        return {
+            "status": "success",
+            "disease": disease,
+            "upserted_id": str(result.upserted_id) if result.upserted_id else None,
+            "modified_count": result.modified_count,
+            "timestamp": doc["updated_at"].isoformat(),
+        }
+    except Exception as exc:
+        logger.error("upsert_disease_reference failed for %s: %s", disease, exc)
+        return {"status": "error", "disease": disease, "details": str(exc)}
+
+
+def get_disease_reference(disease: str) -> Dict[str, Any]:
+    """
+    Retrieve disease reference information from MongoDB.
+
+    Args:
+        disease: Disease name
+
+    Returns:
+        dict with disease information or empty dict if not found.
+    """
+    try:
+        result = _run(
+            _get_client().db.disease_reference.find_one({"disease": disease.lower()})
+        )
+        if result:
+            result["_id"] = str(result["_id"])
+        return result or {}
+    except Exception as exc:
+        logger.error("get_disease_reference failed for %s: %s", disease, exc)
+        return {}
+
+
+def load_disease_references() -> Dict[str, Any]:
+    """
+    Load all disease references from the disease_reference module into MongoDB.
+    Called during system initialization to seed the database.
+
+    Returns:
+        dict with count of diseases loaded and status.
+    """
+    try:
+        from agents.data.disease_reference import DISEASE_DATABASE
+
+        count = 0
+        errors = []
+
+        for disease_key, disease_data in DISEASE_DATABASE.items():
+            try:
+                result = upsert_disease_reference(disease_key, disease_data)
+                if result.get("status") == "success":
+                    count += 1
+                else:
+                    errors.append(
+                        f"{disease_key}: {result.get('details', result.get('message'))}"
+                    )
+            except Exception as e:
+                errors.append(f"{disease_key}: {str(e)}")
+
+        logger.info("✅ Loaded %d disease references into MongoDB", count)
+
+        return {
+            "status": "success" if not errors else "partial",
+            "diseases_loaded": count,
+            "errors": errors if errors else None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        logger.error("load_disease_references failed: %s", exc)
+        return {"status": "error", "details": str(exc)}
+
+
+def search_diseases_by_symptom(symptom: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Find diseases matching a specific symptom.
+    Used by Intake Agent for syndrome suggestion and data correction.
+
+    Args:
+        symptom: Symptom keyword or phrase
+        limit: Max results to return
+
+    Returns:
+        list of matching disease documents.
+    """
+    try:
+        results = _run(
+            _get_client()
+            .db.disease_reference.find(
+                {
+                    "$or": [
+                        {
+                            "clinical_features": {
+                                "$elemMatch": {"$regex": symptom, "$options": "i"}
+                            }
+                        },
+                        {
+                            "synonyms": {
+                                "$elemMatch": {"$regex": symptom, "$options": "i"}
+                            }
+                        },
+                        {"name": {"$regex": symptom, "$options": "i"}},
+                    ]
+                }
+            )
+            .limit(limit)
+        )
+
+        for r in results:
+            r["_id"] = str(r["_id"])
+
+        return results
+    except Exception as exc:
+        logger.error("search_diseases_by_symptom failed for '%s': %s", symptom, exc)
+        return []
+
+
+def record_data_correction(
+    session_id: str,
+    original_extraction: Dict[str, Any],
+    corrected_extraction: Dict[str, Any],
+    correction_reason: str,
+) -> Dict[str, Any]:
+    """
+    Record when Intake Agent corrects extracted data.
+    Used for quality assurance and model improvement.
+
+    Args:
+        session_id: Encounter session ID
+        original_extraction: Original extracted data
+        corrected_extraction: Corrected extracted data
+        correction_reason: Reason for correction (e.g., "syndrome mismatch", "triage adjustment")
+
+    Returns:
+        dict with correction_id and status.
+    """
+    try:
+        doc = {
+            "session_id": session_id,
+            "original_extraction": original_extraction,
+            "corrected_extraction": corrected_extraction,
+            "correction_reason": correction_reason,
+            "timestamp": datetime.now(timezone.utc),
+            "corrected_by": "intake_agent_auto",
+        }
+
+        result = _run(_get_client().db.data_corrections.insert_one(doc))
+
+        return {
+            "status": "recorded",
+            "correction_id": str(result.inserted_id),
+            "session_id": session_id,
+        }
+    except Exception as exc:
+        logger.error("record_data_correction failed: %s", exc)
+        return {"status": "error", "details": str(exc)}
+
+
+def get_data_correction_stats(days: int = 7) -> Dict[str, Any]:
+    """
+    Get statistics on data corrections made by Intake Agent.
+
+    Args:
+        days: Number of days to look back
+
+    Returns:
+        dict with correction statistics.
+    """
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        stats = _run(
+            _get_client().db.data_corrections.aggregate(
+                [
+                    {"$match": {"timestamp": {"$gte": cutoff}}},
+                    {
+                        "$group": {
+                            "_id": "$correction_reason",
+                            "count": {"$sum": 1},
+                        }
+                    },
+                    {"$sort": {"count": -1}},
+                ]
+            )
+        )
+
+        return {
+            "status": "success",
+            "period_days": days,
+            "corrections_by_reason": list(stats),
+        }
+    except Exception as exc:
+        logger.error("get_data_correction_stats failed: %s", exc)
+        return {"status": "error", "details": str(exc)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CLINICAL DATASET SEEDING — Voyage AI Embeddings
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def seed_clinical_dataset() -> Dict[str, Any]:
+    """
+    Load the clinical intake dataset (15 realistic Kenya health scenarios) into
+    MongoDB with Voyage AI embeddings for semantic search.
+
+    Called during system startup (orchestrator _lifespan).
+
+    Returns:
+        dict with status, count of encounters loaded, and timestamp.
+    """
+    try:
+        from agents.data.clinical_intake_dataset import (
+            get_clinical_intake_dataset,
+            get_dataset_embeddings_text,
+        )
+        from agents.data.embedding_service import EmbeddingService
+
+        embedding_svc = EmbeddingService()
+        dataset = get_clinical_intake_dataset()
+        embeddings_text = get_dataset_embeddings_text()
+
+        client = _get_client()
+        count = 0
+        errors = []
+
+        for encounter in dataset:
+            try:
+                encounter_id = encounter["encounter_id"]
+
+                # Generate Voyage AI embedding (1024 dims, document type)
+                embedding_text = embeddings_text.get(encounter_id, "")
+                if embedding_text:
+                    vec = embedding_svc.generate_encounter_embedding(
+                        {
+                            "encounter_id": encounter_id,
+                            "text_for_embedding": embedding_text,
+                        }
+                    )
+                    encounter["embedding"] = vec
+
+                # Insert into encounters collection
+                _run(client.insert_encounter(encounter))
+                count += 1
+            except Exception as e:
+                errors.append(f"Encounter {encounter_id}: {str(e)}")
+
+        logger.info("✅ Seeded %d clinical encounters with Voyage AI embeddings", count)
+
+        return {
+            "status": "success" if not errors else "partial",
+            "encounters_loaded": count,
+            "errors": errors if errors else None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        logger.error("seed_clinical_dataset failed: %s", exc)
+        return {"status": "error", "details": str(exc)}
+
+
+def query_encounters_by_syndrome(syndrome: str, limit: int = 20) -> Dict[str, Any]:
+    """
+    Query encounters by syndrome (e.g., 'malaria', 'pneumonia').
+    Used for case history and pattern analysis.
+
+    Args:
+        syndrome: Syndrome name (malaria, pneumonia, etc.)
+        limit: Max results to return
+
+    Returns:
+        dict with matching encounters and count.
+    """
+    try:
+        client = _get_client()
+        results = _run(
+            client.db.encounters.find(
+                {"extracted.syndrome": syndrome},
+                {"embedding": 0},  # Exclude embeddings from response
+            )
+            .limit(limit)
+            .to_list(limit)
+        )
+
+        return {
+            "status": "success",
+            "syndrome": syndrome,
+            "count": len(results),
+            "encounters": results,
+        }
+    except Exception as exc:
+        logger.error("query_encounters_by_syndrome failed: %s", exc)
+        return {"status": "error", "details": str(exc)}
+
+
+def semantic_search_encounters(query_text: str, limit: int = 5) -> Dict[str, Any]:
+    """
+    Semantic search for encounters using Voyage AI vector embeddings.
+    Searches the encounters collection with MongoDB $vectorSearch.
+
+    Args:
+        query_text: Natural language query (e.g., 'child with fever and cough')
+        limit: Max results to return
+
+    Returns:
+        dict with similar encounters sorted by relevance (similarity score).
+    """
+    try:
+        from agents.data.embedding_service import EmbeddingService
+
+        embedding_svc = EmbeddingService()
+
+        # Generate query embedding (1024 dims, query input type)
+        query_vec = embedding_svc.generate_query_embedding(query_text)
+
+        # Perform MongoDB vector search
+        client = _get_client()
+        results = _run(
+            client.db.encounters.aggregate(
+                [
+                    {
+                        "$search": {
+                            "cosmosSearch": {
+                                "vector": query_vec,
+                                "k": limit,
+                            },
+                            "returnStoredSource": True,
+                        }
+                    },
+                    {
+                        "$project": {
+                            "encounter_id": 1,
+                            "chw_id": 1,
+                            "chw_name": 1,
+                            "patient_details": 1,
+                            "extracted": 1,
+                            "admin_hierarchy": 1,
+                            "similarity_score": {"$meta": "searchScore"},
+                        }
+                    },
+                    {"$limit": limit},
+                ]
+            ).to_list(limit)
+        )
+
+        logger.info(
+            "Semantic search found %d similar encounters for query: %s",
+            len(results),
+            query_text[:50],
+        )
+
+        return {
+            "status": "success",
+            "query": query_text,
+            "count": len(results),
+            "encounters": results,
+        }
+    except Exception as exc:
+        logger.error("semantic_search_encounters failed: %s", exc)
+        return {"status": "error", "details": str(exc)}
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ADK root_agent
@@ -621,7 +1067,7 @@ def vector_search_protocols(query: str, limit: int = 5) -> list:
 
 root_agent = LlmAgent(
     name="data_agent",
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     description=(
         "SihaLink MongoDB data agent. Handles all persistent storage across "
         "7 collections: encounters (with Voyage AI / Google vector embeddings), "
@@ -711,7 +1157,7 @@ CRITICAL RULES:
         search_agent_logs,
     ],
     generate_content_config=genai_types.GenerateContentConfig(
-        temperature=0.0,       # Deterministic — this is a data layer, not creative
+        temperature=0.0,  # Deterministic — this is a data layer, not creative
         max_output_tokens=512,
     ),
 )

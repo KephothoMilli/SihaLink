@@ -85,15 +85,41 @@ class EmbeddingService:
             except ImportError:
                 logger.warning("voyageai not installed — pip install voyageai")
 
-        # 2. Try google-genai SDK (gemini-embedding-001, 3072 dims)
-        if self._voyage_client is None and gemini_key:
-            try:
-                from google import genai as _genai
-                self._genai_client = _genai.Client(api_key=gemini_key)
-                _active_dim = GOOGLE_DIM
-                logger.info("✅ Embedding: Google gemini-embedding-001 (%d dims)", GOOGLE_DIM)
-            except ImportError:
-                logger.error("google-genai not installed — zero vectors will be used")
+        # 2. Try google-genai SDK
+        # When GOOGLE_GENAI_USE_VERTEXAI=TRUE, use ADC (Application Default Credentials)
+        # not an API key — Vertex AI rejects API keys with 401 UNAUTHENTICATED.
+        if self._voyage_client is None:
+            use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() in ("1", "TRUE")
+            if use_vertex:
+                # Vertex AI path — uses ADC automatically, no api_key needed
+                project  = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+                location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+                if project:
+                    try:
+                        from google import genai as _genai
+                        self._genai_client = _genai.Client(
+                            vertexai=True,
+                            project=project,
+                            location=location,
+                        )
+                        _active_dim = GOOGLE_DIM
+                        logger.info(
+                            "✅ Embedding: Vertex AI gemini-embedding-001 (%d dims) project=%s",
+                            GOOGLE_DIM, project,
+                        )
+                    except Exception as exc:
+                        logger.warning("Vertex AI embedding init failed: %s", exc)
+                else:
+                    logger.warning("GOOGLE_CLOUD_PROJECT not set — Vertex AI embedding unavailable")
+            elif gemini_key:
+                # AI Studio path — API key works here
+                try:
+                    from google import genai as _genai
+                    self._genai_client = _genai.Client(api_key=gemini_key)
+                    _active_dim = GOOGLE_DIM
+                    logger.info("✅ Embedding: Google gemini-embedding-001 (%d dims)", GOOGLE_DIM)
+                except ImportError:
+                    logger.error("google-genai not installed — zero vectors will be used")
 
         if self._voyage_client is None and self._genai_client is None:
             logger.warning("⚠️  No embedding provider — set VOYAGE_API_KEY or GEMINI_API_KEY")

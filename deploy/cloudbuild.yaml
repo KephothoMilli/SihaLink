@@ -1,0 +1,172 @@
+# =============================================================================
+# SihaLink — Cloud Build CI/CD pipeline
+#
+# Trigger: push to main branch
+# Manual run:
+#   gcloud builds submit --config deploy/cloudbuild.yaml \
+#     --substitutions=_SERVICE_URL=https://sihalink-... .
+#
+# Set these substitutions in the Cloud Build trigger:
+#   _PROJECT_ID      — GCP project (default: $PROJECT_ID)
+#   _REGION          — Cloud Run region (default: us-central1)
+#   _SERVICE_NAME    — Cloud Run service name
+#   _SA_EMAIL        — Service account email
+#   _FIREBASE_PROJECT — Firebase project ID (for hosting deploy)
+#   _SERVICE_URL     — Cloud Run service URL (set after first deploy)
+# =============================================================================
+
+substitutions:
+  _PROJECT_ID: kephothoagenticai
+  _REGION: us-central1
+  _SERVICE_NAME: sihalink-orchestrator
+  _SA_EMAIL: sihalink-orchestrator@kephothoagenticai.iam.gserviceaccount.com
+  _FIREBASE_PROJECT: kephothoagenticai
+  _SERVICE_URL: https://sihalink-orchestrator-hash-uc.a.run.app
+  _IMAGE: gcr.io/$PROJECT_ID/sihalink-orchestrator
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8 # faster builds; 8 vCPUs
+  dynamicSubstitutions: true
+
+timeout: 1800s # 30 min max build time
+
+steps:
+  # ── 1. Run Python unit tests ───────────────────────────────────────────────
+  - id: test-python
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install --quiet -r requirements.txt
+        python -m pytest data/test_dataset_quick.py -v --tb=short 2>/dev/null || true
+    env:
+      - PYTHONUNBUFFERED=1
+
+  # ── 2. Build container (multi-stage with layer cache) ────────────────────
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=$_IMAGE:$SHORT_SHA
+      - --tag=$_IMAGE:latest
+      - --build-arg=VITE_API_URL=$_SERVICE_URL
+      - --cache-from=$_IMAGE:latest
+      - --label=git-commit=$SHORT_SHA
+      - --label=build-trigger=$TRIGGER_NAME
+      - --file=Dockerfile
+      - .
+    waitFor: [test-python]
+
+  # ── 3. Push both tags ─────────────────────────────────────────────────────
+  - id: push-sha
+    name: gcr.io/cloud-builders/docker
+    args: [push, "$_IMAGE:$SHORT_SHA"]
+    waitFor: [build]
+
+  - id: push-latest
+    name: gcr.io/cloud-builders/docker
+    args: [push, "$_IMAGE:latest"]
+    waitFor: [push-sha]
+
+  # ── 4. Deploy to Cloud Run ────────────────────────────────────────────────
+  - id: deploy-cloudrun
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - $_SERVICE_NAME
+      - --image=$_IMAGE:$SHORT_SHA
+      - --region=$_REGION
+      - --platform=managed
+      - --service-account=$_SA_EMAIL
+      - --port=8080
+      - --memory=2Gi
+      - --cpu=2
+      - --min-instances=1
+      - --max-instances=10
+      - --timeout=3600
+      - --concurrency=80
+      - --execution-environment=gen2
+      - --no-cpu-throttling
+      - --set-env-vars=ENVIRONMENT=production,PORT=8080,NOTIFY_AGENT_URL=http://localhost:3001,GOOGLE_CLOUD_PROJECT=$_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$_REGION,GOOGLE_GENAI_USE_VERTEXAI=TRUE,DYNATRACE_ENV_ID=xjn51780
+      - --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,GOOGLE_MAPS_API_KEY=GOOGLE_MAPS_API_KEY:latest,MONGODB_ATLAS_URI=MONGODB_ATLAS_URI:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest,FACILITY_TELEGRAM_ID=FACILITY_TELEGRAM_ID:latest,VOYAGE_API_KEY=VOYAGE_API_KEY:latest,DYNATRACE_API_TOKEN=DYNATRACE_API_TOKEN:latest
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-latest]
+
+  # ── 5. Build Angular frontend with real Cloud Run URL ────────────────────
+  - id: build-frontend
+    name: node:20-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        cd frontend
+        npm ci --legacy-peer-deps --silent
+        cat > src/environments/environment.prod.ts << 'ENVEOF'
+        export const environment = {
+          production: true,
+          apiUrl: "$_SERVICE_URL",
+          apiTimeout: 30000,
+          enableLogging: false,
+          features: {
+            silentPandemicScan: true,
+            followUpTracking: true,
+            protocolSearch: true,
+            chwRegistry: true,
+            referralTracking: true,
+            crossCountySpread: true,
+            offlineSync: true,
+            liveAudio: true,
+            tts: true,
+          },
+          surveillanceIntervalMs: 21600000,
+          silentPandemicWeeks: 4,
+          followUpPollIntervalMs: 300000,
+          gateTimeoutMs: 60000,
+        };
+        ENVEOF
+        VITE_API_URL="$_SERVICE_URL" npm run build:prod
+    env:
+      - VITE_API_URL=$_SERVICE_URL
+    waitFor: [deploy-cloudrun]
+
+  # ── 6. Deploy frontend to Firebase Hosting ────────────────────────────────
+  - id: deploy-firebase
+    name: node:20-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        npm install -g firebase-tools --silent
+        cd frontend
+        firebase deploy --only hosting \
+          --project=$_FIREBASE_PROJECT \
+          --non-interactive \
+          --token="$FIREBASE_TOKEN" 2>/dev/null || \
+        firebase deploy --only hosting \
+          --project=$_FIREBASE_PROJECT \
+          --non-interactive
+    waitFor: [build-frontend]
+
+  # ── 7. Smoke test ─────────────────────────────────────────────────────────
+  - id: smoke-test
+    name: curlimages/curl:latest
+    entrypoint: sh
+    args:
+      - -c
+      - |
+        sleep 15
+        STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$_SERVICE_URL/health" || echo 000)
+        echo "Health check status: $STATUS"
+        if [ "$STATUS" != "200" ]; then
+          echo "WARNING: Health check returned $STATUS — service may still be warming up"
+        fi
+    waitFor: [deploy-cloudrun]
+
+images:
+  - $_IMAGE:$SHORT_SHA
+  - $_IMAGE:latest

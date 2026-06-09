@@ -1065,6 +1065,181 @@ server.get("/health", async () => ({
   bot: "connected",
 }));
 
+// ── Telegram channel registry ─────────────────────────────────────────────────
+// Maps county names → registered Telegram channel IDs/usernames.
+// District officers can register their county channel via /register command.
+// Swarm broadcasts are fan-out to all registered channels for the relevant county
+// (or to every channel if county = 'NATIONAL').
+
+const countyChannels = new Map<string, string>();
+
+// Seed from env — format: COUNTY_CHANNELS=Nairobi:@SihaLink_Nairobi,Kisumu:-1001234567890
+const COUNTY_CHANNELS_ENV = process.env.COUNTY_CHANNELS ?? "";
+for (const pair of COUNTY_CHANNELS_ENV.split(",")) {
+  const [county, channel] = pair.split(":").map((s) => s.trim());
+  if (county && channel) countyChannels.set(county, channel);
+}
+
+// ── Swarm broadcast endpoint ───────────────────────────────────────────────────
+// Called by the backend (SSE subscriber can POST here, or orchestrator directly)
+// to fan-out a structured swarm event to all relevant Telegram channels.
+
+interface SwarmBroadcastBody {
+  topic: string;
+  title: string;
+  message: string;
+  county?: string;
+  syndrome?: string;
+  alert_id?: string;
+  risk_level?: string;
+  escalation_level?: string;
+  payload?: Record<string, unknown>;
+}
+
+function formatSwarmBroadcast(body: SwarmBroadcastBody): string {
+  const riskEmoji =
+    body.risk_level === "HIGH"
+      ? "🔴"
+      : body.risk_level === "MEDIUM"
+        ? "🟠"
+        : body.escalation_level === "NATIONAL"
+          ? "🔴"
+          : "🟡";
+
+  const lines = [
+    `${riskEmoji} *${escapeMarkdown(body.title)}*`,
+    `━━━━━━━━━━━━━━`,
+    escapeMarkdown(body.message),
+  ];
+  if (body.syndrome)
+    lines.push(
+      `*Syndrome:* ${escapeMarkdown(body.syndrome.replace(/_/g, " "))}`,
+    );
+  if (body.county) lines.push(`*County:* ${escapeMarkdown(body.county)}`);
+  if (body.escalation_level)
+    lines.push(`*Escalation:* ${escapeMarkdown(body.escalation_level)}`);
+  if (body.alert_id) lines.push(`🆔 \`${body.alert_id}\``);
+  lines.push(`_${new Date().toLocaleString("en-KE")}_`);
+  return lines.join("\n");
+}
+
+function escapeMarkdown(text: string): string {
+  return String(text ?? "").replace(/[_*[\]()~`>#+=|{}.!-]/g, "\\$&");
+}
+
+async function sendToChannel(
+  channel: string,
+  text: string,
+  kb?: any,
+): Promise<void> {
+  const isPlaceholder =
+    !channel || channel === "your_facility_chat_id" || channel.trim() === "";
+  if (isPlaceholder) return;
+  await bot.api.sendMessage(channel, text, {
+    parse_mode: "MarkdownV2",
+    reply_markup: kb,
+  });
+}
+
+server.post(
+  "/notify/broadcast",
+  async (
+    request: FastifyRequest<{ Body: SwarmBroadcastBody }>,
+    reply: FastifyReply,
+  ) => {
+    /**
+     * Fan-out a swarm event to all relevant Telegram channels.
+     *
+     * Routing:
+     *   county = 'NATIONAL' or escalation_level = 'NATIONAL'
+     *     → send to ALL registered county channels
+     *   county = 'Nairobi'
+     *     → send to @SihaLink_Nairobi + fallback FACILITY_TELEGRAM_ID
+     *   no county match
+     *     → send to fallback FACILITY_TELEGRAM_ID only
+     */
+    const body = request.body;
+    if (!body?.topic)
+      return reply.status(400).send({ error: "topic required" });
+
+    const text = formatSwarmBroadcast(body);
+    const kb = body.alert_id
+      ? new InlineKeyboard()
+          .text("📊 Dashboard", "view_dash")
+          .text("✅ Acknowledge", `ack_${body.alert_id}`)
+      : undefined;
+
+    const delivered: string[] = [];
+    const errors: string[] = [];
+
+    const isNational =
+      body.county?.toUpperCase() === "NATIONAL" ||
+      body.escalation_level === "NATIONAL";
+
+    const targets: string[] = [];
+
+    if (isNational) {
+      // Broadcast to every registered county channel
+      for (const ch of countyChannels.values()) targets.push(ch);
+    } else if (body.county) {
+      // Try exact county match first
+      const exact = countyChannels.get(body.county);
+      if (exact) targets.push(exact);
+      // Always include derived channel name
+      const derived = `@SihaLink_${body.county.replace(/\s+/g, "")}`;
+      if (!exact || exact !== derived) targets.push(derived);
+    }
+
+    // Always include configured fallback
+    const fallback = process.env.FACILITY_TELEGRAM_ID;
+    if (fallback && fallback !== "your_facility_chat_id")
+      targets.push(fallback);
+
+    // Deduplicate and send
+    for (const channel of [...new Set(targets)]) {
+      try {
+        await sendToChannel(channel, text, kb);
+        delivered.push(channel);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes("chat not found")) {
+          errors.push(`${channel}: ${msg}`);
+          server.log.warn(`Broadcast to ${channel} failed: ${msg}`);
+        }
+      }
+    }
+
+    return reply.send({
+      delivered: delivered.length,
+      channels: delivered,
+      errors: errors.length > 0 ? errors : undefined,
+      topic: body.topic,
+    });
+  },
+);
+
+// ── Channel management endpoints ──────────────────────────────────────────────
+
+server.post(
+  "/notify/register_channel",
+  async (
+    request: FastifyRequest<{ Body: { county: string; channel: string } }>,
+    reply: FastifyReply,
+  ) => {
+    /** Register a county → Telegram channel mapping. */
+    const { county, channel } = request.body ?? {};
+    if (!county || !channel)
+      return reply.status(400).send({ error: "county and channel required" });
+    countyChannels.set(county, channel);
+    return { registered: true, county, channel, total: countyChannels.size };
+  },
+);
+
+server.get("/notify/channels", async () => ({
+  channels: Object.fromEntries(countyChannels),
+  count: countyChannels.size,
+}));
+
 // ── startup ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {

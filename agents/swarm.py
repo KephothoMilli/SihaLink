@@ -348,6 +348,10 @@ class SwarmController:
         # Contact tracing events
         self.bus.subscribe("contact_trace.contact_confirmed", self._on_contact_confirmed)
 
+        # Reflection / escalation events from surveillance cycle
+        self.bus.subscribe("surveillance.escalation_needed",       self._on_national_escalation)
+        self.bus.subscribe("surveillance.silent_pandemic_summary",  self._on_silent_pandemic_summary)
+
         # Log everything to the swarm audit trail
         self.bus.subscribe("*", self._audit_log)
 
@@ -398,16 +402,26 @@ class SwarmController:
     # ─────────────────────────────────────────────────────────────────
 
     async def _run_outbreak_cycle(self) -> None:
-        """Autonomous outbreak detection across all monitored counties."""
+        """
+        Autonomous outbreak detection across all monitored counties.
+        Uses PipelineReflection (IBM agentic workflow pattern) to evaluate
+        cycle results and determine next-cycle priorities.
+        """
         logger.info("[Swarm] 🔍 Starting outbreak detection cycle (%d counties)",
                     len(self.active_counties))
-        total_alerts = 0
+        from agents.workflows import pipeline_reflect
+
+        total_alerts   = 0
+        cycle_results  = []
+
         for county, coords in self.active_counties.items():
             try:
                 from agents.surveillance.agent import run_outbreak_detection
                 result = run_outbreak_detection(
                     county, coords["lat"], coords["lng"], hours=6
                 )
+                result["county"] = county
+                cycle_results.append(result)
                 n = result.get("alerts_detected", 0)
                 total_alerts += n
                 if n > 0:
@@ -418,21 +432,62 @@ class SwarmController:
                         ))
             except Exception as exc:
                 logger.error("[Swarm] Outbreak detection failed for %s: %s", county, exc)
+                cycle_results.append({"county": county, "error": str(exc), "alerts_detected": 0})
 
         self.swarm_stats["last_surveillance_run"] = datetime.utcnow().isoformat()
-        logger.info("[Swarm] ✅ Outbreak cycle complete — %d total alerts", total_alerts)
+
+        # ── IBM ReAct Reflection: evaluate cycle, set next-cycle priorities ──
+        reflection = pipeline_reflect.evaluate_surveillance_cycle(cycle_results)
+        self.swarm_stats["last_cycle_reflection"] = reflection
+
+        if reflection["escalation_needed"]:
+            logger.warning(
+                "[Swarm] 🚨 Reflection: NATIONAL escalation needed — cross-county syndromes: %s",
+                reflection["cross_county_syndromes"],
+            )
+            await self.bus.publish(SwarmEvent(
+                "surveillance.escalation_needed",
+                reflection,
+                source="swarm_reflection",
+            ))
+
+        if reflection["red_syndromes"]:
+            logger.warning(
+                "[Swarm] 🔴 Reflection: HIGH-risk syndromes detected: %s",
+                reflection["red_syndromes"],
+            )
+
+        if reflection["failed_counties"]:
+            logger.warning(
+                "[Swarm] ⚠️  Reflection: %d counties failed detection — will retry next cycle: %s",
+                len(reflection["failed_counties"]), reflection["failed_counties"],
+            )
+
+        logger.info(
+            "[Swarm] ✅ Outbreak cycle complete — %d alerts | quality reflection: %d/%d counties OK",
+            total_alerts,
+            len(self.active_counties) - len(reflection["failed_counties"]),
+            len(self.active_counties),
+        )
 
     async def _run_silent_pandemic_cycle(self) -> None:
-        """Autonomous silent pandemic scan — weekly trends."""
+        """
+        Autonomous silent pandemic scan — weekly trends.
+        Reflection step identifies high-priority syndromes for the next scan.
+        """
         logger.info("[Swarm] 🔬 Starting silent pandemic scan")
         from agents.surveillance.agent import detect_silent_pandemic, detect_cross_county_spread
-        all_syndromes: Set[str] = set()
+        from agents.workflows import pipeline_reflect
+
+        all_syndromes : Set[str] = set()
+        county_signals: list     = []
 
         for county in self.active_counties:
             try:
                 result = detect_silent_pandemic(county, weeks=4)
                 for signal in result.get("silent_signals", []):
                     all_syndromes.add(signal["syndrome"])
+                    county_signals.append({**signal, "county": county})
                     await self.bus.publish(SwarmEvent(
                         "alert.silent_pandemic", {**signal, "county": county},
                         source="surveillance_agent"
@@ -440,7 +495,7 @@ class SwarmController:
             except Exception as exc:
                 logger.error("[Swarm] Silent pandemic scan failed for %s: %s", county, exc)
 
-        # Cross-county spread check for any flagged syndromes
+        # Cross-county spread check for flagged syndromes
         for syndrome in all_syndromes:
             try:
                 spread = detect_cross_county_spread(syndrome, hours=48)
@@ -452,7 +507,26 @@ class SwarmController:
             except Exception as exc:
                 logger.error("[Swarm] Cross-county check failed for %s: %s", syndrome, exc)
 
-        logger.info("[Swarm] ✅ Silent pandemic scan complete")
+        # ── Reflection: rank syndromes by risk for next cycle ─────────────────
+        high_risk = [s for s in county_signals if s.get("risk_level") == "HIGH"]
+        if high_risk:
+            logger.warning(
+                "[Swarm] 🌊 Silent pandemic reflection: %d HIGH-risk signals — %s",
+                len(high_risk),
+                list({s["syndrome"] for s in high_risk}),
+            )
+            await self.bus.publish(SwarmEvent(
+                "surveillance.silent_pandemic_summary",
+                {
+                    "high_risk_count": len(high_risk),
+                    "syndromes":       list({s["syndrome"] for s in high_risk}),
+                    "counties":        list({s["county"]   for s in high_risk}),
+                },
+                source="swarm_reflection",
+            ))
+
+        logger.info("[Swarm] ✅ Silent pandemic scan complete — %d signals, %d unique syndromes",
+                    len(county_signals), len(all_syndromes))
 
     async def _run_baseline_update(self) -> None:
         """Recalculate 4-week rolling baselines for all counties."""
@@ -732,6 +806,52 @@ class SwarmController:
             )
         except Exception as exc:
             logger.error("[Swarm] Secondary contact trace failed: %s", exc)
+
+    async def _on_national_escalation(self, event: SwarmEvent) -> None:
+        """
+        Reflection detected cross-county spread requiring national escalation.
+        IBM pattern: Feedback mechanism — agent acts on its own reflection output.
+        """
+        reflection   = event.payload
+        syndromes    = reflection.get("cross_county_syndromes", {})
+        logger.critical(
+            "[Swarm] 🔴 NATIONAL ESCALATION: cross-county syndromes %s", syndromes
+        )
+        if self.notify:
+            for syndrome, county_count in syndromes.items():
+                if county_count >= self.policy.national_escalation_threshold():
+                    try:
+                        await self.notify.dispatch_outbreak_alert({
+                            "alert_id":    f"national-{syndrome}-{datetime.utcnow().strftime('%Y%m%d%H')}",
+                            "syndrome":    syndrome,
+                            "location":    {"county": "NATIONAL", "ward": "Multiple Counties"},
+                            "count":       county_count,
+                            "percent_above_baseline": 0,
+                            "detected_at": datetime.utcnow().isoformat(),
+                            "status":      "active",
+                            "escalation_level": "NATIONAL",
+                            "recommended_actions": [
+                                f"NATIONAL ALERT: {syndrome} detected in {county_count} counties",
+                                "Activate National Emergency Operations Centre",
+                                "Deploy rapid response teams to all affected counties",
+                            ],
+                        })
+                    except Exception as exc:
+                        logger.warning("[Swarm] National escalation notify failed: %s", exc)
+
+    async def _on_silent_pandemic_summary(self, event: SwarmEvent) -> None:
+        """
+        Reflection summary of high-risk silent pandemic signals.
+        Logs the priority list for the next surveillance cycle.
+        """
+        summary = event.payload
+        logger.warning(
+            "[Swarm] 🌊 Silent pandemic summary: %d HIGH-risk signals across %s",
+            summary.get("high_risk_count", 0),
+            summary.get("counties", []),
+        )
+        # Update swarm stats so dashboard shows the priority syndromes
+        self.swarm_stats["priority_syndromes"] = summary.get("syndromes", [])
 
     async def _run_contact_trace_scan(self) -> None:
         """Daily scan for overdue contact visit tasks.

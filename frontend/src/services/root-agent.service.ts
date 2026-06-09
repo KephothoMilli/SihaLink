@@ -15,6 +15,7 @@ import { GeoAgentService } from './agents/geo-agent.service';
 import { DataAgentService } from './agents/data-agent.service';
 import { NotifyAgentService } from './agents/notify-agent.service';
 import { SurveillanceAgentService } from './agents/surveillance-agent.service';
+import { ContactTracingAgentService } from './agents/contact-tracing-agent.service';
 
 /**
  * Represents the state of a complete encounter workflow
@@ -57,12 +58,14 @@ export class RootAgentService {
     data: boolean;
     notify: boolean;
     surveillance: boolean;
+    contact_tracing: boolean;
   }>({
     intake: false,
     geo: false,
     data: false,
     notify: false,
     surveillance: false,
+    contact_tracing: false,
   });
   public agentStatus$ = this.agentStatus.asObservable();
 
@@ -72,6 +75,7 @@ export class RootAgentService {
     private dataAgent: DataAgentService,
     private notifyAgent: NotifyAgentService,
     private surveillanceAgent: SurveillanceAgentService,
+    private contactTracingAgent: ContactTracingAgentService,
   ) {
     this.checkAgentHealth();
   }
@@ -246,14 +250,23 @@ export class RootAgentService {
   async checkAgentHealth(): Promise<void> {
     const check = (p: Promise<any>) => p.then(() => true).catch(() => false);
     try {
-      const [intake, geo, data, notify, surveillance] = await Promise.all([
-        check(this.intakeAgent.healthCheck()),
-        check(this.geoAgent.healthCheck()),
-        check(this.dataAgent.healthCheck()),
-        check(this.notifyAgent.healthCheck()),
-        check(this.surveillanceAgent.healthCheck()),
-      ]);
-      this.agentStatus.next({ intake, geo, data, notify, surveillance });
+      const [intake, geo, data, notify, surveillance, contact_tracing] =
+        await Promise.all([
+          check(this.intakeAgent.healthCheck()),
+          check(this.geoAgent.healthCheck()),
+          check(this.dataAgent.healthCheck()),
+          check(this.notifyAgent.healthCheck()),
+          check(this.surveillanceAgent.healthCheck()),
+          check(this.contactTracingAgent.healthCheck()),
+        ]);
+      this.agentStatus.next({
+        intake,
+        geo,
+        data,
+        notify,
+        surveillance,
+        contact_tracing,
+      });
     } catch {
       // Backend not running — stay in default all-false state
     }

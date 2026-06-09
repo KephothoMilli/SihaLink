@@ -188,7 +188,7 @@ def interpret_multilingual_input(
         logger.info("[LanguageAgent] 🌍 Translating input (hint: %s)...", source_language or "auto-detect")
 
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
         )
         raw = getattr(resp, "text", str(resp))
@@ -247,7 +247,7 @@ def get_clarification_prompt(question_english: str, target_language: str) -> str
             f"Question: {question_english}"
         )
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
         )
         translated = getattr(resp, "text", question_english).strip()
@@ -264,7 +264,7 @@ def get_clarification_prompt(question_english: str, target_language: str) -> str
 
 root_agent = LlmAgent(
     name="language_agent",
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     description=(
         "SihaLink Multilingual Language Agent. "
         "Detects and translates clinical intake from 10 Kenyan languages "

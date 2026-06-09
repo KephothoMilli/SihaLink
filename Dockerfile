@@ -1,31 +1,52 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# SihaLink — Multi-service container
+# =============================================================================
+# SihaLink — Production Dockerfile for Google Cloud Run
+# =============================================================================
 #
-# Services started by supervisord:
-#   :8080  Orchestrator (FastAPI / uvicorn) — Google Agent Runtime entry point
-#   :3001  Notify Agent  (Node.js / grammY)  — Telegram bot HTTP server
+# Two-service container managed by supervisord:
+#   :8080  Orchestrator (FastAPI/uvicorn)  — Cloud Run primary port
+#   :3001  Notify Agent (Node.js/grammY)   — internal Telegram bot
 #
-# Google Agent Runtime expects the primary service on port 8080.
-# The Orchestrator calls the Notify Agent on localhost:3001 internally.
-# ─────────────────────────────────────────────────────────────────────────────
+# Build:
+#   docker build -t gcr.io/PROJECT_ID/sihalink-orchestrator:latest .
+#
+# Cloud Run expects PORT env var and a single process on $PORT (supervisord
+# here listens to nothing — uvicorn binds 0.0.0.0:8080 which Cloud Run routes to).
+# =============================================================================
 
-# ── Stage 1: Node.js build (Notify Agent) ────────────────────────────────────
+# ── Stage 1: Node.js build (Notify Agent TypeScript → JS) ────────────────────
 FROM node:20-slim AS notify-build
 
 WORKDIR /build/notify
-COPY agents/notify/package.json agents/notify/tsconfig.json ./
+# Copy only dependency manifests first for layer caching
+COPY agents/notify/package.json agents/notify/package-lock.json* ./
 RUN npm ci --omit=dev
+
+COPY agents/notify/tsconfig.json ./
 COPY agents/notify/bot.ts ./
-RUN npx tsc --outDir dist --module commonjs --target es2020 \
-    --esModuleInterop true --skipLibCheck true bot.ts 2>/dev/null || \
-    npx tsc --outDir dist bot.ts || true
-# Fallback: copy source if tsc fails (ts-node will run it directly)
+# Compile TypeScript; tolerate minor type errors (--skipLibCheck)
+RUN npx tsc --outDir dist --module commonjs --target ES2022 \
+      --esModuleInterop true --skipLibCheck true bot.ts \
+    || true
+# Fallback: copy source for tsx runtime if tsc fails
 RUN [ -f dist/bot.js ] || cp bot.ts dist/bot.ts
 
-# ── Stage 2: Python runtime ───────────────────────────────────────────────────
-FROM python:3.12-slim
+# ── Stage 2: Angular frontend build ──────────────────────────────────────────
+FROM node:20-slim AS frontend-build
 
-# System deps: supervisord (process manager) + Node.js (Notify Agent)
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --legacy-peer-deps
+
+COPY frontend/ ./
+# VITE_API_URL is injected at build time via --build-arg
+ARG VITE_API_URL=https://sihalink-orchestrator-hash-uc.a.run.app
+ENV VITE_API_URL=${VITE_API_URL}
+RUN npm run build:prod
+
+# ── Stage 3: Python production runtime ───────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+# Install: supervisord + curl (healthcheck) + Node.js runtime for Notify Agent
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         supervisor \
@@ -33,87 +54,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Non-root user ─────────────────────────────────────────────────────────────
-RUN groupadd -r afya && useradd -r -g afya -d /app -s /sbin/nologin afya
+# Non-root user — Cloud Run best practice
+RUN groupadd -r sihalink \
+    && useradd -r -g sihalink -d /app -s /sbin/nologin sihalink
 
 WORKDIR /app
 
-# ── Python dependencies ───────────────────────────────────────────────────────
+# ── Python dependencies (cached layer) ───────────────────────────────────────
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# ── Node.js dependencies for Notify Agent ────────────────────────────────────
-COPY agents/notify/package.json agents/notify/package-lock.json* ./agents/notify/
-RUN cd agents/notify && npm ci --omit=dev
+# ── Application source ────────────────────────────────────────────────────────
+# Copy agents (Python) and data package
+COPY agents/ ./agents/
+COPY data/ ./data/
+# Top-level __init__ files
+COPY pyproject.toml ./
 
-# ── Application code ──────────────────────────────────────────────────────────
-COPY . .
-
-# Copy compiled Notify Agent from build stage
-COPY --from=notify-build /build/notify/dist ./agents/notify/dist
+# ── Notify Agent artifacts from Stage 1 ──────────────────────────────────────
 COPY --from=notify-build /build/notify/node_modules ./agents/notify/node_modules
+COPY --from=notify-build /build/notify/dist          ./agents/notify/dist
 
-# ── Supervisord configuration ─────────────────────────────────────────────────
-RUN cat > /etc/supervisor/conf.d/sihalink.conf << 'EOF'
-[supervisord]
-nodaemon=true
-user=root
-logfile=/var/log/supervisor/supervisord.log
-pidfile=/var/run/supervisord.pid
+# ── Frontend static files from Stage 2 ───────────────────────────────────────
+# Served by the FastAPI app via StaticFiles mount at "/"
+COPY --from=frontend-build /build/frontend/dist/frontend/browser ./static
 
-[program:orchestrator]
-command=uvicorn agents.orchestrator.agent:app --host 0.0.0.0 --port 8080 --workers 2
-directory=/app
-user=afya
-autostart=true
-autorestart=true
-startretries=5
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-environment=PYTHONUNBUFFERED="1",PORT="8080",DYNATRACE_ENV_ID="%(ENV_DYNATRACE_ENV_ID)s",DYNATRACE_API_TOKEN="%(ENV_DYNATRACE_API_TOKEN)s"
+# ── supervisord config ────────────────────────────────────────────────────────
+RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor /var/run/supervisor
+COPY deploy/supervisord.conf /etc/supervisor/conf.d/sihalink.conf
 
-[program:notify-agent]
-command=node agents/notify/dist/bot.js
-directory=/app
-user=afya
-autostart=true
-autorestart=true
-startretries=5
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-environment=NOTIFY_PORT="3001",DYNATRACE_ENV_ID="%(ENV_DYNATRACE_ENV_ID)s",DYNATRACE_API_TOKEN="%(ENV_DYNATRACE_API_TOKEN)s"
-
-[unix_http_server]
-file=/var/run/supervisor.sock
-
-[rpcinterface:supervisor]
-supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface
-
-[supervisorctl]
-serverurl=unix:///var/run/supervisor.sock
-EOF
-
-# ── Directories and permissions ───────────────────────────────────────────────
-RUN mkdir -p /var/log/supervisor /var/run \
-    && chown -R afya:afya /app \
+# ── Permissions ───────────────────────────────────────────────────────────────
+RUN chown -R sihalink:sihalink /app /var/log/supervisor \
     && chmod 755 /var/log/supervisor
 
-# ── Health check — Agent Runtime polls /health ────────────────────────────────
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# ── Health check (Cloud Run also has its own liveness probe) ──────────────────
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -sf http://localhost:8080/health || exit 1
 
-# ── Ports ─────────────────────────────────────────────────────────────────────
-# 8080 — Orchestrator (Google Agent Runtime primary port)
-# 3001 — Notify Agent (internal only, not exposed externally)
+# ── Expose Cloud Run primary port ─────────────────────────────────────────────
 EXPOSE 8080
 
+# ── Runtime environment defaults (overridden by Cloud Run env/secrets) ────────
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
-    NOTIFY_AGENT_URL=http://localhost:3001
+    NOTIFY_AGENT_URL=http://localhost:3001 \
+    ENVIRONMENT=production
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/sihalink.conf"]
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/sihalink.conf"]

@@ -21,6 +21,7 @@ import base64
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Literal
 
@@ -93,7 +94,7 @@ def _log(session_id: str, step: str, detail: str, level: str = "INFO") -> None:
 # Tool: extract from web form (structured input — fastest path)
 # ---------------------------------------------------------------------------
 
-def extract_from_form(form_data: dict, session_id: str) -> dict:
+def extract_from_form(form_data: Dict[str, Any], session_id: str) -> Dict[str, Any]:
     """
     Extract clinical data from a structured web form submission.
 
@@ -169,12 +170,20 @@ def extract_from_form(form_data: dict, session_id: str) -> dict:
     result["processing_ms"]      = round((time.time() - start) * 1000)
     result["detected_language"]  = translation["detected_language"] if translation else "English"
     result["original_complaint"] = chief_complaint
+    
+    # Apply intelligent data correction using disease reference database
+    _log(session_id, "FORM_INTAKE", "Applying data correction with disease intelligence...")
+    result = correct_and_validate_extraction(result, session_id)
+    
+    # Get actionable intelligence for other agents
+    intelligence = get_actionable_intelligence(result)
+    result["actionable_intelligence"] = intelligence
 
     _log(session_id, "EXTRACTION",
          f"Syndrome: {result.get('syndrome')} | Triage: {result.get('triage_color')} "
          f"| Confidence: {result.get('confidence', 0):.0%}", "SUCCESS")
     _log(session_id, "FORM_INTAKE",
-         f"✅ Form intake complete in {result['processing_ms']}ms", "SUCCESS")
+         f"✅ Form intake complete with corrections in {result['processing_ms']}ms", "SUCCESS")
     return result
 
 
@@ -188,7 +197,7 @@ def extract_from_telegram(
     chw_id: str,
     session_id: str,
     telegram_language_hint: Optional[str] = None,
-) -> dict:
+) -> Dict[str, Any]:
     """
     Extract clinical data from a Telegram message sent by a CHV.
 
@@ -273,12 +282,20 @@ def extract_from_telegram(
     if translation.get("needs_clarification"):
         result["clarification_needed"]   = True
         result["clarification_question"] = translation.get("clarification_question")
+    
+    # Apply intelligent data correction using disease reference database
+    _log(session_id, "TELEGRAM_INTAKE", "Applying data correction with disease intelligence...")
+    result = correct_and_validate_extraction(result, session_id)
+    
+    # Get actionable intelligence for other agents
+    intelligence = get_actionable_intelligence(result)
+    result["actionable_intelligence"] = intelligence
 
     _log(session_id, "EXTRACTION",
          f"Syndrome: {result.get('syndrome')} | Triage: {result.get('triage_color')} "
          f"| Confidence: {result.get('confidence', 0):.0%}", "SUCCESS")
     _log(session_id, "TELEGRAM_INTAKE",
-         f"✅ Telegram intake complete in {result['processing_ms']}ms", "SUCCESS")
+         f"✅ Telegram intake complete with corrections in {result['processing_ms']}ms", "SUCCESS")
     return result
 
 
@@ -287,10 +304,10 @@ def extract_from_telegram(
 # ---------------------------------------------------------------------------
 
 def extract_from_agent(
-    agent_payload: dict,
+    agent_payload: Dict[str, Any],
     source_agent: str,
     session_id: str,
-) -> dict:
+) -> Dict[str, Any]:
     """
     Process a clinical intake payload sent by another SihaLink agent.
 
@@ -378,17 +395,19 @@ def extract_from_agent(
 # Tool: extract from raw audio (original path — still supported for live sessions)
 # ---------------------------------------------------------------------------
 
-def extract_clinical_data(audio_base64: str, session_id: str) -> dict:
+def extract_clinical_data(audio_base64: str, session_id: str) -> Dict[str, Any]:
     """
     Extract structured clinical data from a base64-encoded audio recording.
     Supports multilingual input — audio is transcribed, translated, then extracted.
+    
+    Applies intelligent data correction using disease reference database.
 
     Args:
         audio_base64: Base64-encoded WAV or WebM audio from the CHV recording.
         session_id:   Unique encounter session identifier.
 
     Returns:
-        Standard clinical extraction dict.
+        Standard clinical extraction dict with corrections applied.
     """
     _log(session_id, "AUDIO_INTAKE", "🎙️ Processing audio recording...")
     start = time.time()
@@ -415,9 +434,17 @@ def extract_clinical_data(audio_base64: str, session_id: str) -> dict:
     result["source"]        = IntakeSource.AUDIO
     result["session_id"]    = session_id
     result["processing_ms"] = round((time.time() - start) * 1000)
+    
+    # Apply intelligent data correction using disease reference database
+    _log(session_id, "AUDIO_INTAKE", "Applying data correction with disease intelligence...")
+    result = correct_and_validate_extraction(result, session_id)
+    
+    # Get actionable intelligence for other agents
+    intelligence = get_actionable_intelligence(result)
+    result["actionable_intelligence"] = intelligence
 
     _log(session_id, "AUDIO_INTAKE",
-         f"✅ Audio intake complete in {result['processing_ms']}ms | "
+         f"✅ Audio intake complete with corrections in {result['processing_ms']}ms | "
          f"Triage: {result.get('triage_color')}", "SUCCESS")
     return result
 
@@ -427,10 +454,10 @@ def extract_clinical_data(audio_base64: str, session_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def clarify_extraction(
-    original_extraction: dict,
+    original_extraction: Dict[str, Any],
     clarification_answer: str,
     session_id: str = "unknown",
-) -> dict:
+) -> Dict[str, Any]:
     """
     Refine a previous clinical extraction using a CHV clarification answer.
     The answer may be in any supported Kenyan language — it is translated first.
@@ -465,7 +492,7 @@ def clarify_extraction(
         from google import genai
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
         )
         raw = getattr(resp, "text", str(resp))
@@ -547,12 +574,225 @@ def get_triage_guidance(triage_color: str, syndrome: str, language: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# DATA CORRECTION & VALIDATION (Reinforce intake with disease intelligence)
+# ---------------------------------------------------------------------------
+
+def correct_and_validate_extraction(extraction: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    """
+    Apply intelligent data correction to intake extraction using disease intelligence.
+    
+    Correction logic:
+    1. Validate syndrome against clinical presentation
+    2. Correct syndrome if symptoms don't match
+    3. Validate and correct triage color
+    4. Check for actionable information completeness
+    5. Validate age/sex consistency
+    6. Check for required follow-up fields
+    
+    Args:
+        extraction: Raw extracted clinical data
+        session_id: Session identifier for logging
+    
+    Returns:
+        dict with corrected extraction + metadata about corrections made.
+    """
+    from agents.data.disease_reference import (
+        get_disease_info, get_similar_diseases, validate_triage_color
+    )
+    
+    corrected = extraction.copy()
+    corrections_made = []
+    
+    _log(session_id, "DATA_CORRECTION", "🔍 Starting intake data validation and correction...")
+    
+    # ── 1. Extract syndrome from symptoms if missing ────────────────────────────
+    syndrome = corrected.get("syndrome", "unknown").lower()
+    symptoms = corrected.get("symptoms", [])
+    
+    if syndrome == "unknown" and symptoms:
+        similar = get_similar_diseases(symptoms)
+        if similar:
+            corrected["syndrome"] = similar[0]
+            corrections_made.append(f"inferred_syndrome: {similar[0]} from symptoms")
+            _log(session_id, "DATA_CORRECTION", f"✅ Inferred syndrome: {similar[0]}")
+    
+    # ── 2. Validate syndrome against disease database ──────────────────────────
+    syndrome = corrected.get("syndrome", "unknown").lower()
+    disease_info = get_disease_info(syndrome)
+    
+    if not disease_info and syndrome != "unknown":
+        # Try to find similar diseases
+        similar = get_similar_diseases(symptoms)
+        if similar:
+            corrected["syndrome"] = similar[0]
+            corrections_made.append(f"corrected_syndrome: {syndrome} → {similar[0]}")
+            _log(session_id, "DATA_CORRECTION",
+                 f"⚠️ Corrected unrecognized syndrome '{syndrome}' → '{similar[0]}'")
+    
+    # ── 3. Validate and correct triage color ────────────────────────────────────
+    triage_color = corrected.get("triage_color", "YELLOW")
+    danger_signs = corrected.get("danger_signs", [])
+    
+    is_valid, suggested_color, reason = validate_triage_color(triage_color, danger_signs)
+    if not is_valid:
+        corrected["triage_color"] = suggested_color
+        corrections_made.append(f"corrected_triage: {triage_color} → {suggested_color} ({reason})")
+        _log(session_id, "DATA_CORRECTION",
+             f"⚠️ Corrected triage: {triage_color} → {suggested_color}")
+    
+    # ── 4. Validate age consistency ────────────────────────────────────────────
+    age_value = corrected.get("age_value")
+    age_unit = corrected.get("age_unit", "years").lower()
+    
+    if age_value and age_unit:
+        # Convert to years for consistency
+        if age_unit == "months":
+            age_years = age_value / 12
+        elif age_unit == "days":
+            age_years = age_value / 365
+        else:
+            age_years = age_value
+        
+        # Flag if age is outside realistic range
+        if age_years < 0 or age_years > 150:
+            corrected["age_value_corrected"] = True
+            corrections_made.append(f"flagged_age: {age_value} {age_unit} (unrealistic)")
+            _log(session_id, "DATA_CORRECTION",
+                 f"⚠️ Flagged unrealistic age: {age_value} {age_unit}")
+    
+    # ── 5. Check for actionable information completeness ──────────────────────
+    required_fields = ["chief_complaint", "symptoms", "age_value", "sex"]
+    missing_fields = [f for f in required_fields if not corrected.get(f)]
+    
+    if missing_fields:
+        corrections_made.append(f"missing_fields: {missing_fields}")
+        corrected["requires_clarification"] = True
+        _log(session_id, "DATA_CORRECTION",
+             f"⚠️ Missing actionable information: {missing_fields}")
+    else:
+        corrected["has_complete_actionable_info"] = True
+    
+    # ── 6. Enhance with disease context from database ────────────────────────
+    syndrome_final = corrected.get("syndrome", "unknown").lower()
+    disease_data = get_disease_info(syndrome_final)
+    
+    if disease_data:
+        # Add disease context
+        corrected["disease_context"] = {
+            "name": disease_data.get("name"),
+            "category": disease_data.get("category"),
+            "case_definition": disease_data.get("case_definition"),
+            "kenya_context": disease_data.get("kenya_context"),
+        }
+        corrected["triage_recommendations"] = disease_data.get("triage", {})
+        corrected["management_guidance"] = disease_data.get("management", {})
+        _log(session_id, "DATA_CORRECTION", f"✅ Added disease context for {syndrome_final}")
+    
+    # ── 7. Add metadata about corrections ──────────────────────────────────────
+    corrected["data_corrections_applied"] = corrections_made
+    corrected["validation_timestamp"] = datetime.now(timezone.utc).isoformat()
+    corrected["validation_status"] = "corrected" if corrections_made else "validated"
+    
+    if corrections_made:
+        _log(session_id, "DATA_CORRECTION",
+             f"✅ Applied {len(corrections_made)} corrections", "SUCCESS")
+    else:
+        _log(session_id, "DATA_CORRECTION",
+             f"✅ Data validation complete — no corrections needed", "SUCCESS")
+    
+    return corrected
+
+
+def get_actionable_intelligence(extraction: Dict[str, Any], county: str = "") -> Dict[str, Any]:
+    """
+    Extract actionable intelligence from corrected intake data for other agents.
+    
+    Provides:
+    - Surveillance alerts (is this an outbreak indicator?)
+    - Referral requirements (where should this patient go?)
+    - Follow-up schedule (when to check back?)
+    - Contact tracing triggers (close contacts?)
+    - MOH notification requirements (reporting duties?)
+    
+    Args:
+        extraction: Corrected extraction data
+        county: Patient county for context
+    
+    Returns:
+        dict with actionable intelligence.
+    """
+    from agents.data.disease_reference import get_disease_info
+    
+    syndrome = extraction.get("syndrome", "unknown").lower()
+    triage_color = extraction.get("triage_color", "GREEN")
+    disease_data = get_disease_info(syndrome)
+    
+    intelligence = {
+        "syndrome": syndrome,
+        "triage_color": triage_color,
+        "actions": [],
+        "surveillance_alert": False,
+        "referral_required": False,
+        "follow_up_schedule": [],
+        "contact_tracing_required": False,
+        "moh_notification_required": False,
+    }
+    
+    # RED cases always require immediate referral
+    if triage_color == "RED":
+        intelligence["actions"].append("IMMEDIATE_REFERRAL")
+        intelligence["referral_required"] = True
+        intelligence["actions"].append("EMERGENCY_PROTOCOL")
+    
+    # YELLOW cases may require referral
+    elif triage_color == "YELLOW":
+        intelligence["actions"].append("URGENT_ASSESSMENT")
+        intelligence["referral_required"] = True
+    
+    # Add disease-specific intelligence
+    if disease_data:
+        kenya_context = disease_data.get("kenya_context", {})
+        
+        # Outbreak alerting for high-priority diseases
+        if syndrome in ["ebola", "yellow_fever", "meningitis", "cholera"]:
+            intelligence["surveillance_alert"] = True
+            intelligence["actions"].append("OUTBREAK_ALERT")
+            intelligence["moh_notification_required"] = True
+        
+        # Contact tracing for certain diseases
+        if syndrome in ["ebola", "covid_19", "meningitis", "tuberculosis"]:
+            intelligence["contact_tracing_required"] = True
+            intelligence["actions"].append("CONTACT_TRACING")
+        
+        # Add follow-up schedule
+        management = disease_data.get("management", {})
+        if isinstance(management.get("follow_up"), list):
+            intelligence["follow_up_schedule"] = management["follow_up"]
+        else:
+            # Default follow-up by triage
+            follow_up_defaults = {
+                "RED": [1, 3, 7, 14],
+                "YELLOW": [2, 7, 14],
+                "GREEN": [7],
+            }
+            intelligence["follow_up_schedule"] = follow_up_defaults.get(triage_color, [7])
+        
+        # Kenya-specific response protocol
+        if "response_protocol" in kenya_context:
+            intelligence["response_protocol"] = kenya_context["response_protocol"]
+    
+    intelligence["generated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    return intelligence
+
+
+# ---------------------------------------------------------------------------
 # ADK root_agent
 # ---------------------------------------------------------------------------
 
 root_agent = LlmAgent(
     name="intake_agent",
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     description=(
         "SihaLink Intake Agent. Accepts clinical intake from web forms, Telegram, "
         "and other agents. Routes all input through the Multilingual Language Agent "
@@ -608,14 +848,23 @@ Never ask more than one clarification question. Default to YELLOW if uncertain.
 # ---------------------------------------------------------------------------
 
 def build_run_config(voice_name: str = "Aoede") -> RunConfig:
-    """Build RunConfig with TTS enabled. Aoede is clear and calm for medical comms."""
+    """
+    Build RunConfig with TTS enabled for Gemini Live API sessions.
+    Uses gemini-live-2.5-flash-preview — the correct Live API model.
+    The root_agent model (gemini-3.5-flash) is used for regular run_async calls;
+    RunConfig.model overrides it for run_live (bidirectional audio) sessions.
+    """
     voice_config = genai_types.VoiceConfig(
         prebuilt_voice_config=genai_types.PrebuiltVoiceConfigDict(
             voice_name=voice_name
         )
     )
     speech_config = genai_types.SpeechConfig(voice_config=voice_config)
-    return RunConfig(speech_config=speech_config)
+    return RunConfig(
+        model="gemini-live-2.5-flash-preview",  # CRITICAL: Live API requires this specific model
+        speech_config=speech_config,
+        response_modalities=["AUDIO"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -800,7 +1049,7 @@ def _extract_from_text(english_text: str, session_id: str) -> Dict[str, Any]:
         prompt = _build_text_extraction_prompt(english_text)
         _log(session_id, "EXTRACTION", "Calling Gemini for clinical extraction...")
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
         )
         raw = getattr(resp, "text", str(resp))
@@ -821,27 +1070,45 @@ def _extract_from_audio(audio_base64: str, session_id: str) -> Dict[str, Any]:
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
+        _log(session_id, "EXTRACTION", "GEMINI_API_KEY not set — using mock extraction", "WARNING")
         return _mock_extraction()
 
     try:
         audio_bytes = base64.b64decode(audio_base64)
+        if not audio_bytes:
+            _log(session_id, "EXTRACTION", "Empty audio buffer after decoding", "WARNING")
+            return _mock_extraction()
+            
         from google import genai
         from google.genai import types as genai_t
         client = genai.Client(api_key=api_key)
         prompt = _build_audio_extraction_prompt()
         _log(session_id, "EXTRACTION", "Calling Gemini multimodal for audio extraction...")
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=[
                 prompt,
                 genai_t.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
             ],
         )
         raw = getattr(resp, "text", str(resp))
-        return _parse_clinical_json(raw)
+        parsed = _parse_clinical_json(raw)
+        _log(session_id, "EXTRACTION", f"Audio extraction successful: {parsed.get('syndrome', 'unknown')}", "SUCCESS")
+        return parsed
     except Exception as exc:
         _log(session_id, "EXTRACTION", f"Audio extraction failed: {exc}", "ERROR")
-        return {"error": "extraction_failed", "details": str(exc)}
+        logger.exception("Audio extraction exception")
+        # Return a valid extraction structure with error marker
+        return {
+            "syndrome": "unknown",
+            "triage_color": "YELLOW",
+            "confidence": 0.0,
+            "error": "extraction_failed",
+            "details": str(exc),
+            "clarification_needed": False,
+            "chief_complaint": "",
+            "symptoms": [],
+        }
 
 
 def _transcribe_audio(audio_base64: str, session_id: str) -> Optional[str]:
@@ -851,9 +1118,14 @@ def _transcribe_audio(audio_base64: str, session_id: str) -> Optional[str]:
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
+        _log(session_id, "TRANSCRIPTION", "GEMINI_API_KEY not set", "WARNING")
         return None
     try:
         audio_bytes = base64.b64decode(audio_base64)
+        if not audio_bytes:
+            _log(session_id, "TRANSCRIPTION", "Empty audio buffer", "WARNING")
+            return None
+            
         from google import genai
         from google.genai import types as genai_t
         client = genai.Client(api_key=api_key)
@@ -863,18 +1135,20 @@ def _transcribe_audio(audio_base64: str, session_id: str) -> Optional[str]:
             "Meru, Turkana, Kalenjin, or English. Output only the transcript text, "
             "preserving the original language. No translation, no explanation."
         )
+        _log(session_id, "TRANSCRIPTION", "Calling Gemini for audio transcription...")
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             contents=[
                 prompt,
                 genai_t.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
             ],
         )
         transcript = getattr(resp, "text", "").strip()
-        _log(session_id, "AUDIO", f"Transcript ({len(transcript)} chars): '{transcript[:60]}'")
+        _log(session_id, "TRANSCRIPTION", f"Transcript ({len(transcript)} chars): '{transcript[:60]}'", "SUCCESS")
         return transcript if transcript else None
     except Exception as exc:
-        _log(session_id, "AUDIO", f"Transcription failed: {exc}", "ERROR")
+        _log(session_id, "TRANSCRIPTION", f"Transcription failed: {exc}", "ERROR")
+        logger.exception("Audio transcription exception")
         return None
 
 

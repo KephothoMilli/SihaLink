@@ -19,6 +19,12 @@
           {{ offlineQueueSize }} queued
         </span>
       </span>
+      <!-- SSE live alert indicator -->
+      @if (isOnline) {
+      <span class="sse-badge" [class.sse-live]="sseConnected" title="Live swarm alerts">
+        {{ sseConnected ? '📡 LIVE' : '⏳ connecting…' }}
+      </span>
+      }
     </div>
 
     <button class="menu-toggle" (click)="toggleMenu()" [class.active]="isMenuOpen">
@@ -44,6 +50,10 @@
     <span class="agent-pill-health" [class.healthy]="status.surveillance" (click)="navigateTo('/agents/surveillance')">
       <span class="indicator-dot"></span> 📊 Surveillance
     </span>
+    <span class="agent-pill-health" [class.healthy]="status.contact_tracing"
+      (click)="navigateTo('/agents/contact-tracing')">
+      <span class="indicator-dot"></span> 🔗 Contact Tracing
+    </span>
   </div>
 
   <div class="app-layout">
@@ -68,6 +78,9 @@
       </a>
       <a (click)="navigateTo('/agents/surveillance')" class="nav-link" [routerLinkActive]="'active'">
         <span class="nav-icon">📊</span> Surveillance
+      </a>
+      <a (click)="navigateTo('/agents/contact-tracing')" class="nav-link" [routerLinkActive]="'active'">
+        <span class="nav-icon">🔗</span> Contact Tracing
       </a>
 
       <div class="nav-divider">Database Logs</div>
@@ -137,20 +150,40 @@
     </div>
   </div>
 
-  <!-- ── Toast Notification Stack ────────────────────────────── -->
-  <div class="toast-stack" *ngIf="toasts.length > 0">
-    <div
-      *ngFor="let toast of toasts"
-      class="toast-item animate-toast-in"
-      [class.toast-success]="toast.type === 'success'"
-      [class.toast-warning]="toast.type === 'warning'"
-      [class.toast-error]="toast.type === 'error'"
-      [class.toast-info]="toast.type === 'info'"
-    >
+  <!-- ── Live Swarm Alert / Toast Stack ─────────────────────────── -->
+  @if (toasts.length > 0) {
+  <div class="toast-stack">
+    <!-- Dismiss all button when 3+ toasts -->
+    @if (toasts.length >= 3) {
+    <button class="toast-dismiss-all" (click)="dismissAll()">
+      Dismiss all ({{ toasts.length }})
+    </button>
+    }
+    @for (toast of toasts; track toast.id) {
+    <div class="toast-item animate-toast-in" [class.toast-critical]="toast.type === 'critical'"
+      [class.toast-success]="toast.type === 'success'" [class.toast-warning]="toast.type === 'warning'"
+      [class.toast-error]="toast.type === 'error'" [class.toast-info]="toast.type === 'info'">
       <span class="toast-icon">{{ toast.icon }}</span>
-      <span class="toast-message">{{ toast.message }}</span>
+      <div class="toast-body">
+        @if (toast.title) {
+        <p class="toast-title">{{ toast.title }}</p>
+        }
+        <p class="toast-message">{{ toast.message }}</p>
+        @if (toast.county || toast.syndrome) {
+        <div class="toast-badges">
+          @if (toast.county) {
+          <span class="toast-badge">📍 {{ toast.county }}</span>
+          }
+          @if (toast.syndrome) {
+          <span class="toast-badge toast-badge-syndrome">🦠 {{ toast.syndrome }}</span>
+          }
+        </div>
+        }
+      </div>
       <button class="toast-close" (click)="dismissToast(toast.id)">✕</button>
     </div>
+    }
   </div>
+  }
 
 </div>

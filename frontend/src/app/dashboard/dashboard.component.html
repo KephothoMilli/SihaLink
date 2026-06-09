@@ -16,7 +16,7 @@
     </div>
     <div class="hero-stats">
       <div class="hero-stat">
-        <span class="hero-stat-num">5</span>
+        <span class="hero-stat-num">6</span>
         <span class="hero-stat-lbl">Active Agents</span>
       </div>
       <div class="hero-stat-divider"></div>
@@ -80,6 +80,15 @@
         </div>
         <span class="icon">📊</span>
       </div>
+
+      <div class="status-card" [class.healthy]="status.contact_tracing" routerLink="/agents/contact-tracing">
+        <div class="status-indicator"></div>
+        <div class="status-info">
+          <span class="label">Contact Tracing</span>
+          <span class="status-txt">{{ status.contact_tracing ? 'OPERATIONAL' : 'OFFLINE' }}</span>
+        </div>
+        <span class="icon">🔗</span>
+      </div>
     </div>
   </div>
 
@@ -101,17 +110,13 @@
   <!-- Active Session Monitoring -->
   <div class="dashboard-section active-sessions-section animate-fade-in">
     <h3>Active Clinical Sessions</h3>
-    
+
     <div *ngIf="activeSessions.length > 0" class="sessions-list">
-      <div
-        *ngFor="let session of activeSessions"
-        class="session-monitor-card"
-        [style.border-left-color]="getStateColor(session.state)"
-      >
+      <div *ngFor="let session of activeSessions" class="session-monitor-card"
+        [style.border-left-color]="getStateColor(session.state)">
         <div class="session-monitor-header">
           <h4>Session: <code>{{ session.sessionId }}</code></h4>
-          <span class="state-badge"
-            [style.background-color]="getStateColor(session.state) + '22'"
+          <span class="state-badge" [style.background-color]="getStateColor(session.state) + '22'"
             [style.color]="getStateColor(session.state)">
             {{ getStateLabel(session.state) }}
           </span>
@@ -123,9 +128,7 @@
             <span class="pct">{{ getStateProgress(session.state) }}%</span>
           </div>
           <div class="progress-bar-track">
-            <div
-              class="progress-bar-fill"
-              [style.width.%]="getStateProgress(session.state)"
+            <div class="progress-bar-fill" [style.width.%]="getStateProgress(session.state)"
               [style.background-color]="getStateColor(session.state)">
             </div>
           </div>
@@ -133,7 +136,7 @@
 
         <!-- Gate waiting notice -->
         <div class="gate-waiting" *ngIf="session.state === 'CLARIFICATION_GATE'">
-          ❓ Waiting for CHV clarification:<br/>
+          ❓ Waiting for CHV clarification:<br />
           <em>{{ session.data?.gate_data?.question || 'Additional details needed…' }}</em>
         </div>
         <div class="gate-waiting decision" *ngIf="session.state === 'DECISION_GATE'">
