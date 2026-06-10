@@ -362,17 +362,53 @@ class Orchestrator:
         - YELLOW triage: auto-queue (return False) on timeout
         """
         self.sessions[session_id]["state"] = EncounterState.DECISION_GATE
-        # Store the full extracted data so the frontend poll can display it
-        extracted = data.get("extracted", {})
+
+        # extracted may be nested under "extracted" key (enriched doc) or at top level
+        extracted = data.get("extracted") or data
+        if not isinstance(extracted, dict):
+            extracted = {}
+
+        # Pull clinical values with multiple fallback paths
+        triage_color = (
+            extracted.get("triage_color")
+            or data.get("triage_color")
+            or "YELLOW"
+        )
+        syndrome = (
+            extracted.get("syndrome")
+            or data.get("syndrome")
+            or ""
+        )
+        chief_complaint = (
+            extracted.get("chief_complaint")
+            or extracted.get("original_complaint")
+            or data.get("chief_complaint")
+            or ""
+        )
+        symptoms = (
+            extracted.get("symptoms")
+            or extracted.get("primary_symptoms")
+            or data.get("symptoms")
+            or []
+        )
+        # Ensure symptoms is a list
+        if isinstance(symptoms, str):
+            symptoms = [symptoms]
+
+        # Store extracted AND gate_data so the frontend has multiple read paths
         self.sessions[session_id]["extracted"] = extracted
         self.sessions[session_id]["gate_data"] = {
-            "triage_color": extracted.get("triage_color") or extracted.get("triage_color", "YELLOW"),
-            "summary":      extracted.get("chief_complaint") or extracted.get("original_complaint", ""),
-            "syndrome":     extracted.get("syndrome", ""),
-            "symptoms":     extracted.get("symptoms", []),
-            "encounter_id": data.get("encounter_id"),
+            "triage_color": triage_color,
+            "summary":      chief_complaint,
+            "syndrome":     syndrome,
+            "symptoms":     symptoms,
+            "encounter_id": data.get("encounter_id", ""),
+            "referral_id":  data.get("referral_id", ""),
         }
-        logger.info("⏳ Waiting for CHV confirmation — session %s", session_id)
+        logger.info(
+            "⏳ DECISION_GATE — session %s | triage=%s | syndrome=%s",
+            session_id, triage_color, syndrome
+        )
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()

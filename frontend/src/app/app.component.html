@@ -117,17 +117,21 @@
           {{ clarificationSession.data?.gate_data?.question || 'Please provide additional clinical details.' }}
         </p>
         <div class="gate-preview-card">
-          <textarea class="clarification-input" [(ngModel)]="clarificationAnswer" rows="3"
-            placeholder="Type your answer here…" (keydown.enter)="$event.preventDefault(); submitClarification()">
+          <textarea class="clarification-input" [(ngModel)]="clarificationAnswer" rows="4"
+            placeholder="Type your answer here…" autofocus>
           </textarea>
         </div>
+        @if (clarificationError) {
+        <p class="clarification-error">⚠️ {{ clarificationError }}</p>
+        }
       </div>
 
       <div class="gate-actions">
-        <button (click)="submitClarification()" [disabled]="!clarificationAnswer.trim()" class="btn-confirm">
-          ✓ Submit Answer
+        <button (click)="submitClarification()" [disabled]="!clarificationAnswer.trim() || clarificationSubmitting"
+          class="btn-confirm">
+          {{ clarificationSubmitting ? '⏳ Submitting…' : '✓ Submit Answer' }}
         </button>
-        <button (click)="clarificationSession = null; clarificationAnswer = ''" class="btn-decline">
+        <button (click)="skipClarification()" [disabled]="clarificationSubmitting" class="btn-decline">
           ✕ Skip
         </button>
       </div>
@@ -136,18 +140,16 @@
   }
 
   <!-- Frosted Glass Decision Gate Modal -->
-  <div class="gate-overlay animate-fade-in" *ngIf="gateSession">
-    <div class="gate-modal"
-      [class.red]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED'"
-      [class.yellow]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) !== 'RED'">
+  @if (gateSession) {
+  <div class="gate-overlay animate-fade-in">
+    <div class="gate-modal" [class.red]="resolveGateTriage(gateSession) === 'RED'"
+      [class.yellow]="resolveGateTriage(gateSession) !== 'RED'">
 
       <div class="gate-header">
         <span class="gate-triage-badge"
-          [style.background]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED' ? '#fee2e2' : '#fef3c7'"
-          [style.color]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED' ? '#dc2626' : '#b45309'">
-          {{ (gateSession.data?.gate_data?.triage_color
-          || gateSession.data?.extraction?.['triage_color']) === 'RED'
-          ? 'CRITICAL ALERT' : 'PENDING APPROVAL' }}
+          [style.background]="resolveGateTriage(gateSession) === 'RED' ? '#fee2e2' : '#fef3c7'"
+          [style.color]="resolveGateTriage(gateSession) === 'RED' ? '#dc2626' : '#b45309'">
+          {{ resolveGateTriage(gateSession) === 'RED' ? 'CRITICAL ALERT' : 'PENDING APPROVAL' }}
         </span>
         <h2>Clinical Gate Authorization</h2>
         <p class="session-label">Session: <code>{{ gateSession.sessionId }}</code></p>
@@ -161,39 +163,28 @@
         <div class="gate-preview-card">
           <div class="preview-item">
             <span class="label">Triage</span>
-            <span class="value"
-              [style.color]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED' ? '#dc2626' :
-                             (gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'YELLOW' ? '#d97706' : '#16a34a'"
+            <span class="value" [style.color]="resolveGateTriage(gateSession) === 'RED' ? '#dc2626' :
+                             resolveGateTriage(gateSession) === 'YELLOW' ? '#d97706' : '#16a34a'"
               [style.font-weight]="'700'">
-              {{ gateSession.data?.gate_data?.triage_color
-              || gateSession.data?.extraction?.['triage_color']
-              || 'YELLOW' }}
+              {{ resolveGateTriage(gateSession) }}
             </span>
           </div>
           <div class="preview-item">
             <span class="label">Syndrome</span>
             <span class="value" style="text-transform:capitalize">
-              {{ (gateSession.data?.gate_data?.syndrome
-              || gateSession.data?.extraction?.['syndrome']
-              || 'unknown').replace('_',' ') }}
+              {{ (resolveGateSyndrome(gateSession) || 'unknown').replace('_', ' ') }}
             </span>
           </div>
           <div class="preview-item">
             <span class="label">Chief Complaint</span>
             <span class="value">
-              {{ gateSession.data?.gate_data?.summary
-              || gateSession.data?.extraction?.['chief_complaint']
-              || gateSession.data?.extraction?.['original_complaint']
-              || 'See clinical records' }}
+              {{ resolveGateComplaint(gateSession) || 'See clinical records' }}
             </span>
           </div>
-          @if ((gateSession.data?.gate_data?.symptoms || gateSession.data?.extraction?.['symptoms'])?.length) {
+          @if (resolveGateSymptoms(gateSession).length > 0) {
           <div class="preview-item">
             <span class="label">Symptoms</span>
-            <span class="value">
-              {{ (gateSession.data?.gate_data?.symptoms || gateSession.data?.extraction?.['symptoms'] || []).join(', ')
-              }}
-            </span>
+            <span class="value">{{ resolveGateSymptoms(gateSession).join(', ') }}</span>
           </div>
           }
           @if (gateSession.data?.geoEnriched?.admin_hierarchy?.county) {
@@ -214,6 +205,7 @@
       </div>
     </div>
   </div>
+  }
 
   <!-- ── Live Swarm Alert / Toast Stack ─────────────────────────── -->
   @if (toasts.length > 0) {

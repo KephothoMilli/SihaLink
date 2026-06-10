@@ -171,13 +171,48 @@ export class RootAgentService {
         if (backendState) session.state = backendState as any;
 
         // Map backend session dict keys → frontend session.data
-        // State machine stores: "extracted", "encounter_id", "gate_data"
+        // State machine stores: "extracted", "gate_data", "encounter_id"
         const d: Record<string, any> = status.data ?? {};
         if (d['extracted']) session.data.extraction = d['extracted'];
         if (d['enriched']) session.data.geoEnriched = d['enriched'];
         if (d['encounter_id'])
           session.data.mongoStored = { id: d['encounter_id'] };
-        if (d['gate_data']) session.data.gate_data = d['gate_data'];
+
+        // gate_data is the primary source; merge extracted as fallback
+        if (d['gate_data']) {
+          session.data.gate_data = {
+            ...d['gate_data'],
+            // Ensure we have values even if gate_data fields are empty
+            triage_color:
+              d['gate_data'].triage_color ||
+              d['extracted']?.triage_color ||
+              'YELLOW',
+            syndrome: d['gate_data'].syndrome || d['extracted']?.syndrome || '',
+            summary:
+              d['gate_data'].summary ||
+              d['extracted']?.chief_complaint ||
+              d['extracted']?.original_complaint ||
+              '',
+            symptoms:
+              d['gate_data'].symptoms ||
+              d['extracted']?.symptoms ||
+              d['extracted']?.primary_symptoms ||
+              [],
+          };
+        } else if (d['extracted'] && backendState === 'DECISION_GATE') {
+          // gate_data not yet populated but we know we're at DECISION_GATE — build it from extracted
+          session.data.gate_data = {
+            triage_color: d['extracted'].triage_color || 'YELLOW',
+            syndrome: d['extracted'].syndrome || '',
+            summary:
+              d['extracted'].chief_complaint ||
+              d['extracted'].original_complaint ||
+              '',
+            symptoms:
+              d['extracted'].symptoms || d['extracted'].primary_symptoms || [],
+          };
+        }
+
         if (status['error']) session.error = status['error'];
 
         this.activeSessions.set(sessionId, session);

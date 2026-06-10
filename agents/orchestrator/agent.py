@@ -1302,16 +1302,30 @@ async def clarify_encounter(session_id: str, payload: Dict[str, Any]):
     """
     Submit a clarification answer for an encounter in CLARIFICATION_GATE state.
     The lifecycle coroutine is paused and waiting for this to resolve its Future.
+    
+    If the gate already timed out or doesn't exist, returns 200 (not 404) so
+    the frontend modal can close gracefully.
+    
+    Special value '__skip__' means the CHV chose to skip — treated as empty answer
+    so the pipeline continues with what it has.
     """
     answer = payload.get("answer", "").strip()
     if not answer:
         raise HTTPException(status_code=400, detail="answer is required")
+    
+    # Treat __skip__ as an empty string so the state machine's "if not answer: break" path triggers
+    if answer == "__skip__":
+        answer = ""
+
     future = orchestrator._pending_gates.get(session_id)
     if not future or future.done():
-        raise HTTPException(
-            status_code=404,
-            detail="No active clarification gate for this session",
-        )
+        # Gate already resolved (timed out or previously answered) — return gracefully
+        return {
+            "session_id": session_id,
+            "status": "already_resolved",
+            "gate": "clarification",
+            "note": "Gate was already resolved or timed out"
+        }
     future.set_result(answer)
     return {"session_id": session_id, "status": "resolved", "gate": "clarification"}
 

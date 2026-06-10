@@ -45,6 +45,8 @@ export class AppComponent implements OnInit, OnDestroy {
   gateSession: any = null;
   clarificationSession: any = null; // session waiting for CLARIFICATION_GATE answer
   clarificationAnswer = '';
+  clarificationSubmitting = false;
+  clarificationError: string | null = null;
   sseConnected = false;
 
   // Toast notification queue — holds both agent-health and live swarm alerts
@@ -122,6 +124,8 @@ export class AppComponent implements OnInit, OnDestroy {
     // ── Decision gate toasts ─────────────────────────────────────────────────
     this._subs.push(
       this.rootAgent.sessionUpdates$.subscribe((session) => {
+        if (!session) return;
+
         if (session?.state === 'DECISION_GATE') {
           this.gateSession = session;
           this.showToast(
@@ -130,26 +134,36 @@ export class AppComponent implements OnInit, OnDestroy {
             '🔔',
           );
         } else if (session?.state === 'CLARIFICATION_GATE') {
-          this.clarificationSession = session;
-          this.clarificationAnswer = '';
+          // New or updated clarification — only replace if it's a new question
+          // to avoid flickering while the user is typing their answer
+          if (
+            !this.clarificationSession ||
+            this.clarificationSession.sessionId !== session.sessionId
+          ) {
+            this.clarificationSession = session;
+            this.clarificationAnswer = '';
+            this.clarificationError = null;
+            this.clarificationSubmitting = false;
+          } else {
+            // Same session — update gate_data in case question changed
+            this.clarificationSession = session;
+          }
           this.showToast(
             'CHV clarification needed — answer below',
             'info',
             '❓',
           );
-        } else if (
-          this.gateSession &&
-          session &&
-          this.gateSession.sessionId === session.sessionId
-        ) {
-          this.gateSession = null;
-        } else if (
-          this.clarificationSession &&
-          session &&
-          this.clarificationSession.sessionId === session.sessionId
-        ) {
-          this.clarificationSession = null;
-          this.clarificationAnswer = '';
+        } else {
+          // Clear gate modals when the session moves to a non-gate state
+          if (this.gateSession?.sessionId === session.sessionId) {
+            this.gateSession = null;
+          }
+          if (this.clarificationSession?.sessionId === session.sessionId) {
+            this.clarificationSession = null;
+            this.clarificationAnswer = '';
+            this.clarificationError = null;
+            this.clarificationSubmitting = false;
+          }
         }
       }),
     );
@@ -211,6 +225,42 @@ export class AppComponent implements OnInit, OnDestroy {
 
   // ── Gate confirmation ──────────────────────────────────────────────────────
 
+  /** Resolve triage color from gate session — checks gate_data then extraction fallback */
+  resolveGateTriage(session: any): string {
+    return (
+      session?.data?.gate_data?.triage_color ||
+      session?.data?.extraction?.triage_color ||
+      session?.data?.extraction?.['triage_color'] ||
+      'YELLOW'
+    );
+  }
+
+  resolveGateSyndrome(session: any): string {
+    return (
+      session?.data?.gate_data?.syndrome ||
+      session?.data?.extraction?.syndrome ||
+      ''
+    );
+  }
+
+  resolveGateComplaint(session: any): string {
+    return (
+      session?.data?.gate_data?.summary ||
+      session?.data?.extraction?.chief_complaint ||
+      session?.data?.extraction?.original_complaint ||
+      ''
+    );
+  }
+
+  resolveGateSymptoms(session: any): string[] {
+    const s =
+      session?.data?.gate_data?.symptoms ||
+      session?.data?.extraction?.symptoms ||
+      session?.data?.extraction?.primary_symptoms ||
+      [];
+    return Array.isArray(s) ? s : [];
+  }
+
   async confirmGate(confirmed: boolean) {
     if (!this.gateSession) return;
     try {
@@ -226,15 +276,49 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async submitClarification() {
     if (!this.clarificationSession || !this.clarificationAnswer.trim()) return;
+    this.clarificationSubmitting = true;
+    this.clarificationError = null;
     try {
       await this.rootAgent.submitClarificationAnswer(
         this.clarificationSession.sessionId,
         this.clarificationAnswer.trim(),
       );
+      // Optimistically close the modal — the poll will confirm when backend moves on
       this.clarificationAnswer = '';
       this.clarificationSession = null;
+      this.clarificationSubmitting = false;
     } catch (error) {
-      console.error('Failed to submit clarification:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      // 404 means the gate already timed out — close gracefully
+      if (msg.includes('404') || msg.includes('No active clarification')) {
+        this.clarificationSession = null;
+        this.clarificationAnswer = '';
+        this.clarificationSubmitting = false;
+      } else {
+        this.clarificationError = 'Could not submit answer. Try again.';
+        this.clarificationSubmitting = false;
+        console.error('Failed to submit clarification:', error);
+      }
+    }
+  }
+
+  /** Skip the clarification gate — sends a blank answer so the pipeline continues. */
+  async skipClarification() {
+    if (!this.clarificationSession) return;
+    this.clarificationSubmitting = true;
+    try {
+      // Send a skip signal — backend treats empty/skip as "no clarification"
+      await this.rootAgent.submitClarificationAnswer(
+        this.clarificationSession.sessionId,
+        '__skip__',
+      );
+    } catch {
+      // Gate may have timed out — that's fine
+    } finally {
+      this.clarificationSession = null;
+      this.clarificationAnswer = '';
+      this.clarificationError = null;
+      this.clarificationSubmitting = false;
     }
   }
 

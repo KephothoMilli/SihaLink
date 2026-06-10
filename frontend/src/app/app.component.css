@@ -316,10 +316,53 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 1rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+/* Clarification textarea inside gate-preview-card */
+.clarification-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  border: 1.5px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background: #fff;
+  resize: vertical;
+  min-height: 90px;
+  transition: border-color 0.15s;
+  outline: none;
+}
+.clarification-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+/* Error message below the textarea */
+.clarification-error {
+  font-size: 0.8rem;
+  color: #dc2626;
+  margin: 0.4rem 0 0;
+  padding: 0.35rem 0.6rem;
+  background: #fff1f2;
+  border-left: 3px solid #dc2626;
+  border-radius: 4px;
+}
+
+/* Disabled state for submit button while submitting */
+.btn-confirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn-decline:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .preview-item {
