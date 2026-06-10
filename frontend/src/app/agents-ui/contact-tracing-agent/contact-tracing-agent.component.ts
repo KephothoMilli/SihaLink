@@ -1,15 +1,22 @@
 /**
  * Contact Tracing Agent UI Component
  *
- * Three views:
- *   1. Active Traces    — list all live traces with status histograms
- *   2. Initiate Trace   — start a trace by encounter_id or alert_id
- *   3. Trace Detail     — full contact list + analytics for a single trace
+ * Tab 1 — Active Traces: MatTable + MatPaginator (server-side)
+ * Tab 2 — Initiate Trace: manual trace start
+ * Tab 3 — Trace Detail: analytics + MatTable contact list with update panel
  */
 
-import { Component, OnInit } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  ViewChild,
+  AfterViewInit,
+  ChangeDetectorRef,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
+
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
@@ -23,6 +30,15 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatTableModule, MatTableDataSource } from '@angular/material/table';
+import {
+  MatPaginatorModule,
+  MatPaginator,
+  PageEvent,
+} from '@angular/material/paginator';
+import { MatSortModule, MatSort } from '@angular/material/sort';
+import { MatBadgeModule } from '@angular/material/badge';
+
 import {
   ContactTracingAgentService,
   ContactTrace,
@@ -112,11 +128,20 @@ const WHO_SYNDROMES = [
     MatTooltipModule,
     MatDividerModule,
     MatSnackBarModule,
+    MatTableModule,
+    MatPaginatorModule,
+    MatSortModule,
+    MatBadgeModule,
   ],
 })
-export class ContactTracingAgentComponent implements OnInit {
+export class ContactTracingAgentComponent implements OnInit, AfterViewInit {
+  @ViewChild('tracesPaginator') tracesPaginator!: MatPaginator;
+  @ViewChild('tracesSort') tracesSort!: MatSort;
+  @ViewChild('contactsPaginator') contactsPaginator!: MatPaginator;
+
   readonly counties = KENYA_COUNTIES;
   readonly syndromes = WHO_SYNDROMES;
+
   readonly tierColors: Record<string, string> = {
     HOUSEHOLD: '#d32f2f',
     COMMUNITY: '#f57c00',
@@ -131,49 +156,77 @@ export class ContactTracingAgentComponent implements OnInit {
     confirmed: '#d32f2f',
   };
 
-  // ── Active Traces tab ─────────────────────────────────────────────────────
-  activeTraces: ContactTrace[] = [];
+  // ── Tab 1: Active Traces table ────────────────────────────────────────────
+  tracesDataSource = new MatTableDataSource<ContactTrace>([]);
+  tracesColumns = [
+    'trace_id',
+    'syndrome',
+    'location',
+    'progress',
+    'contacts',
+    'escalation',
+    'actions',
+  ];
+  tracesTotal = 0;
+  tracesLoading = false;
   filterCounty = '';
   filterSyndrome = '';
-  tracesLoading = false;
+  pageSize = 10;
+  pageIndex = 0;
+  readonly pageSizeOptions = [10, 20, 50];
 
-  // Inline detail on Active Traces tab (avoids tab switch)
-  inlineTraceId: string | null = null;
+  // Inline detail on Active Traces table row
+  expandedTrace: ContactTrace | null = null;
   inlineTrace: ContactTrace | null = null;
   inlineLoading = false;
 
-  // ── Initiate Trace tab ────────────────────────────────────────────────────
+  // ── Tab 2: Initiate Trace ─────────────────────────────────────────────────
   initEncounterId = '';
   initAlertId = '';
   initiating = false;
   initResult: ContactTrace | null = null;
 
-  // ── Trace Detail tab ──────────────────────────────────────────────────────
+  // ── Tab 3: Trace Detail ───────────────────────────────────────────────────
   detailTraceId = '';
   traceDetail: ContactTrace | null = null;
   detailLoading = false;
 
-  // ── Update contact ────────────────────────────────────────────────────────
+  // Contacts table inside Trace Detail
+  contactsDataSource = new MatTableDataSource<ContactRecord>([]);
+  contactsColumns = [
+    'contact_id',
+    'risk_tier',
+    'location',
+    'status',
+    'due_date',
+    'action',
+  ];
+
   selectedContact: ContactRecord | null = null;
-  updateStatus: string = 'contacted';
+  updateStatus = 'contacted';
   updateNotes = '';
   updateLoading = false;
 
   error: string | null = null;
-
-  // expose for template overdue check
   readonly currentDate = new Date().toISOString();
 
   constructor(
     private ctService: ContactTracingAgentService,
     private snackBar: MatSnackBar,
+    private router: Router,
+    private cd: ChangeDetectorRef,
   ) {}
 
   ngOnInit() {
     this.loadActiveTraces();
   }
 
-  // ── Active traces ─────────────────────────────────────────────────────────
+  ngAfterViewInit() {
+    this.tracesDataSource.sort = this.tracesSort;
+    this.contactsDataSource.paginator = this.contactsPaginator;
+  }
+
+  // ── Active Traces ─────────────────────────────────────────────────────────
 
   async loadActiveTraces() {
     this.tracesLoading = true;
@@ -182,9 +235,14 @@ export class ContactTracingAgentComponent implements OnInit {
       const res = await this.ctService.getActiveTraces({
         county: this.filterCounty || undefined,
         syndrome: this.filterSyndrome || undefined,
-        limit: 50,
+        limit: 200, // load all then paginate client-side
       });
-      this.activeTraces = res.traces ?? [];
+      const all = res.traces ?? [];
+      this.tracesTotal = all.length;
+      // Use MatTableDataSource built-in pagination and sorting
+      this.tracesDataSource.data = all;
+      this.tracesDataSource.paginator = this.tracesPaginator;
+      this.tracesDataSource.sort = this.tracesSort;
     } catch (err) {
       this.error = err instanceof Error ? err.message : 'Failed to load traces';
     } finally {
@@ -192,33 +250,45 @@ export class ContactTracingAgentComponent implements OnInit {
     }
   }
 
-  /** Toggle inline detail panel on the Active Traces tab card. */
-  async openInlineDetail(traceId: string) {
-    // Collapse if already open
-    if (this.inlineTraceId === traceId) {
-      this.inlineTraceId = null;
+  onTracesPage(e: PageEvent) {
+    this.pageSize = e.pageSize;
+    this.pageIndex = e.pageIndex;
+  }
+
+  applyFilters() {
+    this.pageIndex = 0;
+    this.expandedTrace = null;
+    if (this.tracesDataSource.paginator) {
+      this.tracesDataSource.paginator.pageIndex = 0;
+    }
+    this.loadActiveTraces();
+  }
+
+  // ── Row expand ────────────────────────────────────────────────────────────
+
+  async toggleRow(trace: ContactTrace) {
+    if (this.expandedTrace === trace) {
+      this.expandedTrace = null;
       this.inlineTrace = null;
       return;
     }
-    this.inlineTraceId = traceId;
+    this.expandedTrace = trace;
     this.inlineTrace = null;
     this.inlineLoading = true;
     try {
-      this.inlineTrace = await this.ctService.getTraceStatus(traceId);
-    } catch (err) {
-      this.error =
-        err instanceof Error ? err.message : 'Failed to load trace detail';
-      this.inlineTraceId = null;
+      this.inlineTrace = await this.ctService.getTraceStatus(trace.trace_id);
+    } catch {
+      this.inlineTrace = trace;
     } finally {
       this.inlineLoading = false;
     }
   }
 
-  isInlineExpanded(traceId: string): boolean {
-    return this.inlineTraceId === traceId;
+  isExpanded(trace: ContactTrace) {
+    return this.expandedTrace === trace;
   }
 
-  // ── Initiate trace ────────────────────────────────────────────────────────
+  // ── Initiate Trace ────────────────────────────────────────────────────────
 
   async initiateTrace() {
     if (!this.initEncounterId.trim() && !this.initAlertId.trim()) {
@@ -237,7 +307,7 @@ export class ContactTracingAgentComponent implements OnInit {
         initiated_by: 'dashboard',
       });
       this.snackBar.open(
-        `Trace ${this.initResult.trace_id} — ${this.initResult.total_contacts ?? 0} contacts identified`,
+        `Trace ${this.initResult.trace_id} — ${this.initResult.total_contacts ?? 0} contacts`,
         'OK',
         { duration: 5000 },
       );
@@ -250,7 +320,7 @@ export class ContactTracingAgentComponent implements OnInit {
     }
   }
 
-  // ── Trace detail ──────────────────────────────────────────────────────────
+  // ── Trace Detail ──────────────────────────────────────────────────────────
 
   async loadTraceDetail(traceId?: string) {
     const id = traceId ?? this.detailTraceId.trim();
@@ -265,6 +335,7 @@ export class ContactTracingAgentComponent implements OnInit {
     try {
       this.traceDetail = await this.ctService.getTraceStatus(id);
       this.detailTraceId = id;
+      this.contactsDataSource.data = this.traceDetail.contacts ?? [];
     } catch (err) {
       this.error = err instanceof Error ? err.message : 'Trace not found';
     } finally {
@@ -272,8 +343,8 @@ export class ContactTracingAgentComponent implements OnInit {
     }
   }
 
-  openContactUpdate(contact: ContactRecord) {
-    this.selectedContact = contact;
+  openContactUpdate(c: ContactRecord) {
+    this.selectedContact = c;
     this.updateStatus = 'contacted';
     this.updateNotes = '';
   }
@@ -312,8 +383,8 @@ export class ContactTracingAgentComponent implements OnInit {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  tierColor(tier: string) {
-    return this.tierColors[tier] ?? '#757575';
+  tierColor(t: string) {
+    return this.tierColors[t] ?? '#757575';
   }
   statusColor(s: string) {
     return this.statusColors[s] ?? '#757575';
@@ -326,15 +397,19 @@ export class ContactTracingAgentComponent implements OnInit {
         : 0)
     );
   }
-  histogramKeys(obj: Record<string, number> | undefined): string[] {
-    return obj ? Object.keys(obj) : [];
+  histogramKeys(o?: Record<string, number>) {
+    return o ? Object.keys(o) : [];
   }
   formatSyndrome(s: string) {
     return s.replace(/_/g, ' ');
   }
-  escalationColor(level?: string) {
-    if (level === 'NATIONAL') return '#d32f2f';
-    if (level === 'REGIONAL') return '#f57c00';
+  escalationColor(l?: string) {
+    if (l === 'NATIONAL') return '#d32f2f';
+    if (l === 'REGIONAL') return '#f57c00';
     return '#0288d1';
+  }
+
+  goToEncounters() {
+    this.router.navigate(['/encounters']);
   }
 }

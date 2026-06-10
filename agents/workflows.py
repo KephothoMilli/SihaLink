@@ -104,7 +104,7 @@ class WorkflowState:
         self._db = db
 
     def _col(self):
-        if not self._db:
+        if self._db is None:
             return None
         return self._db[self.COLLECTION]
 
@@ -515,7 +515,7 @@ class AgentMemory:
         self._db = db
 
     def _col(self):
-        return self._db[self.COLLECTION] if self._db else None
+        return self._db[self.COLLECTION] if self._db is not None else None
 
     def remember(self, session_id: str, key: str, value: Any) -> None:
         """Store a memory entry for a session."""

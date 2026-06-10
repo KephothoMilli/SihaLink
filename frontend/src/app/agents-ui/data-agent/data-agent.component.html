@@ -3,9 +3,9 @@
 <div class="data-agent-container">
   <div class="agent-title-section">
     <span class="agent-badge">Data Agent</span>
-    <h2>MongoDB Data Management Portal</h2>
+    <h2>SihaLink Data Management Portal</h2>
     <p class="description">
-      Query the MongoDB Atlas database for clinical encounters using hybrid vector search,
+      Query clinical encounters using full-text and vector search,
       and run county-level surveillance stats.
     </p>
   </div>
@@ -21,7 +21,7 @@
       <!-- Search Card -->
       <div class="action-card search-card">
         <h3>Search Case Encounters</h3>
-        <p class="section-hint">Executes vector-based embedding search on clinical reports:</p>
+        <p class="section-hint">Search symptoms, syndromes, chief complaints, and clinical notes:</p>
         <div class="search-box">
           <input type="text" [(ngModel)]="searchQuery"
             placeholder="Search symptoms, e.g., 'severe fever with chills'..." (keyup.enter)="searchEncounters()" />

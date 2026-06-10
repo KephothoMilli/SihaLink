@@ -77,7 +77,9 @@ def search_health_guidelines(
     Returns:
         dict with text (full response), query, and sources list.
     """
-    import google.generativeai as genai_sdk
+    # google-genai (new SDK, installed) replaces google-generativeai (old SDK)
+    from google import genai as genai_sdk
+    from google.genai import types as _genai_types
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -104,7 +106,7 @@ def search_health_guidelines(
 
     try:
         if use_vertex:
-            # Vertex AI path — OAuth via ADC, not API key
+            # Vertex AI path — new google-genai SDK (old vertexai SDK deprecated June 2025)
             project  = os.getenv("GOOGLE_CLOUD_PROJECT", "")
             location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
             if not project:
@@ -113,36 +115,67 @@ def search_health_guidelines(
                     "text":   "Search unavailable: GOOGLE_CLOUD_PROJECT not set.",
                     "sources": [],
                 }
-            import vertexai
-            from vertexai.generative_models import GenerativeModel, Tool, grounding
-            vertexai.init(project=project, location=location)
-            model = GenerativeModel(
-                model_name="gemini-2.5-flash",
-                tools=[Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval())],
+            # Use google-genai with vertexai=True — same SDK as the rest of the project
+            vertex_client = genai_sdk.Client(
+                vertexai=True,
+                project=project,
+                location=location,
             )
+            response = vertex_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=_genai_types.GenerateContentConfig(
+                    tools=[_genai_types.Tool(
+                        google_search=_genai_types.GoogleSearch()
+                    )],
+                    temperature=0.1,
+                ),
+            )
+            text = ""
+            for part in (response.candidates[0].content.parts if response.candidates else []):
+                if hasattr(part, "text") and part.text:
+                    text += part.text
+            # Extract grounding citations
+            sources_found: List[str] = []
+            try:
+                for candidate in (response.candidates or []):
+                    gm = getattr(candidate, "grounding_metadata", None)
+                    if gm:
+                        for chunk in (getattr(gm, "grounding_chunks", None) or []):
+                            web = getattr(chunk, "web", None)
+                            if web and getattr(web, "uri", None):
+                                sources_found.append(web.uri)
+            except Exception:
+                pass
         else:
-            genai_sdk.configure(api_key=api_key)
-            model = genai_sdk.GenerativeModel(
-                model_name="gemini-2.5-flash",
-                tools="google_search_retrieval",
+            # AI Studio path — use google-genai SDK (installed as google-adk dependency)
+            client = genai_sdk.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=_genai_types.GenerateContentConfig(
+                    tools=[_genai_types.Tool(
+                        google_search=_genai_types.GoogleSearch()
+                    )],
+                    temperature=0.1,
+                ),
             )
-        response = model.generate_content(prompt)
-        text = response.text if response.text else ""
-
-        # Try to extract grounding citations
-        sources_found: List[str] = []
-        try:
-            for candidate in (response.candidates or []):
-                gm = getattr(candidate, "grounding_metadata", None)
-                if gm:
-                    for chunk in (getattr(gm, "grounding_chunks", None) or []):
-                        web = getattr(chunk, "web", None)
-                        if web and getattr(web, "uri", None):
-                            sources_found.append(
-                                f"{getattr(web, 'title', 'Source')}: {web.uri}"
-                            )
-        except Exception:
-            pass
+            text = ""
+            for part in (response.candidates[0].content.parts if response.candidates else []):
+                if hasattr(part, "text") and part.text:
+                    text += part.text
+            # Extract grounding citations
+            sources_found = []
+            try:
+                for candidate in (response.candidates or []):
+                    gm = getattr(candidate, "grounding_metadata", None)
+                    if gm:
+                        for chunk in (getattr(gm, "grounding_chunks", None) or []):
+                            web = getattr(chunk, "web", None)
+                            if web and getattr(web, "uri", None):
+                                sources_found.append(web.uri)
+            except Exception:
+                pass
 
         logger.info(
             "[ProtocolSearch] Query: '%s' → %d chars, %d sources",
@@ -517,18 +550,24 @@ async def research_and_formulate_protocol(
             final_response[:120] if final_response else "no response",
         )
 
-        # Retrieve the saved protocol
+        # Retrieve the saved protocol (non-blocking via executor)
         from pymongo import MongoClient
         uri = os.getenv("MONGODB_ATLAS_URI")
         if uri:
-            client = MongoClient(uri, appname="sihalink")
-            doc = client.sihalink.protocols.find_one(
-                {"syndrome": syndrome, "county": county, "status": "active"},
-                {"_id": 0},
-                sort=[("updated_at", -1)],
-            )
-            client.close()
-            if doc:
+            def _fetch_protocol():
+                c = MongoClient(uri, appname="sihalink", serverSelectionTimeoutMS=5000)
+                try:
+                    return c.sihalink.protocols.find_one(
+                        {"syndrome": syndrome, "county": {"$in": [county, "all"]}, "status": "active"},
+                        {"_id": 0},
+                        sort=[("updated_at", -1)],
+                    )
+                finally:
+                    c.close()
+
+            loop = asyncio.get_event_loop()
+            doc = await loop.run_in_executor(None, _fetch_protocol)
+            if doc and doc.get("immediate_actions"):
                 return doc
 
         return {
@@ -550,24 +589,165 @@ def research_and_formulate_protocol_sync(
     alert_level: str = "YELLOW",
     force_refresh: bool = False,
 ) -> Dict[str, Any]:
-    """Synchronous wrapper for research_and_formulate_protocol."""
-    import concurrent.futures
-    
-    def _run_async():
-        """Run the async protocol research in a fresh event loop."""
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(
-                research_and_formulate_protocol(syndrome, county, alert_level, force_refresh)
-            )
-        finally:
-            loop.close()
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_run_async)
-        try:
-            return future.result(timeout=60)
-        except Exception as exc:
-            logger.error("Protocol research sync wrapper failed: %s", exc)
-            return {"syndrome": syndrome, "county": county, "error": str(exc)}
+    """
+    Direct (non-ADK-runner) protocol research:
+      1. Check MongoDB for an existing active protocol first
+      2. Call search_health_guidelines directly (sync) to get WHO/CDC/MOH text
+      3. Parse the search result into a structured protocol
+      4. Persist via save_protocol
+      5. Return the full protocol dict
+
+    This bypasses the ADK LlmAgent runner entirely to avoid event-loop
+    cross-thread issues when called from the surveillance background task.
+    """
+    from pymongo import MongoClient
+
+    # ── Step 0: check existing protocol unless force_refresh ─────────────────
+    if not force_refresh:
+        uri = os.getenv("MONGODB_ATLAS_URI")
+        if uri:
+            try:
+                c = MongoClient(uri, appname="sihalink", serverSelectionTimeoutMS=5000)
+                doc = c.sihalink.protocols.find_one(
+                    {
+                        "syndrome": syndrome,
+                        "county": {"$in": [county, "all"]},
+                        "status": "active",
+                    },
+                    {"_id": 0},
+                    sort=[("updated_at", -1)],
+                )
+                c.close()
+                if doc and doc.get("immediate_actions"):
+                    logger.info(
+                        "[Protocol] Using cached protocol for %s/%s", syndrome, county
+                    )
+                    return doc
+            except Exception as exc:
+                logger.debug("[Protocol] Cache lookup failed: %s", exc)
+
+    # ── Step 1: search WHO/CDC/MOH guidelines ─────────────────────────────────
+    logger.info("[Protocol] 🔍 Searching WHO/CDC/MOH for %s protocol…", syndrome)
+    search1 = search_health_guidelines(
+        f"{syndrome.replace('_',' ')} WHO IDSR response protocol Kenya 2024",
+        focus_sources="who.int, health.go.ke, cdc.gov, afro.who.int",
+    )
+    search2 = search_health_guidelines(
+        f"{syndrome.replace('_',' ')} community health worker field tasks outbreak management",
+        focus_sources="who.int, cdc.gov, msf.org",
+    )
+
+    combined_text = (search1.get("text") or "") + "\n\n" + (search2.get("text") or "")
+    sources = list(set(
+        (search1.get("sources") or []) + (search2.get("sources") or [])
+    ))
+
+    if not combined_text.strip():
+        logger.warning("[Protocol] Search returned no text for %s — using template", syndrome)
+        return {"syndrome": syndrome, "county": county, "error": "search_empty"}
+
+    # ── Step 2: extract structured actions from search text using Gemini ──────
+    try:
+        from google import genai as _g
+        from google.genai import types as _t
+
+        use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() in ("1", "TRUE")
+        project    = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+        location   = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+        api_key    = os.getenv("GEMINI_API_KEY")
+
+        if use_vertex and project:
+            client = _g.Client(vertexai=True, project=project, location=location)
+        else:
+            client = _g.Client(api_key=api_key)
+
+        extraction_prompt = f"""You are a public health protocol expert.
+Based on the research below, extract a structured response protocol for {syndrome.replace('_',' ')} in Kenya.
+
+Research:
+{combined_text[:4000]}
+
+Return ONLY a valid JSON object with exactly these keys:
+{{
+  "immediate_actions": ["action 1 (within 24h)", "action 2", "action 3", "action 4", "action 5"],
+  "chw_actions": ["CHW field task 1", "CHW field task 2", "CHW field task 3"],
+  "follow_up_days": [1, 7, 14],
+  "reporting_threshold": 5,
+  "who_idsr_code": "3-letter code",
+  "research_summary": "2-sentence summary of key guidance"
+}}"""
+
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=extraction_prompt,
+            config=_t.GenerateContentConfig(temperature=0.0, max_output_tokens=1024),
+        )
+        resp_text = ""
+        for part in (resp.candidates[0].content.parts if resp.candidates else []):
+            if hasattr(part, "text") and part.text:
+                resp_text += part.text
+
+        # Strip markdown fences if present
+        resp_text = resp_text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+
+        import json
+        structured = json.loads(resp_text)
+
+    except Exception as exc:
+        logger.warning("[Protocol] Structured extraction failed (%s) — using raw text", exc)
+        structured = {
+            "immediate_actions":  [
+                f"Activate {syndrome.replace('_',' ')} response plan",
+                "Isolate and treat confirmed cases",
+                "Notify county health officer immediately",
+                "Deploy CHW rapid response teams to affected wards",
+                "Submit IDSR notification within 24 hours",
+            ],
+            "chw_actions": [
+                "Identify and register all suspected cases in ward",
+                "Distribute ORS/treatment materials",
+                "Conduct household follow-up visits",
+            ],
+            "follow_up_days": [1, 7, 14],
+            "reporting_threshold": 5,
+            "who_idsr_code": "UNK",
+            "research_summary": combined_text[:300],
+        }
+
+    # ── Step 3: persist protocol ──────────────────────────────────────────────
+    result = save_protocol(
+        syndrome=syndrome,
+        county=county,
+        alert_level=alert_level,
+        source_authority="AI-researched (WHO/CDC/MOH)",
+        immediate_actions=structured.get("immediate_actions", []),
+        chw_actions=structured.get("chw_actions", []),
+        follow_up_days=structured.get("follow_up_days", [1, 7, 14]),
+        reporting_threshold=structured.get("reporting_threshold", 5),
+        who_idsr_code=structured.get("who_idsr_code", "UNK"),
+        sources_consulted=sources[:10],
+        research_summary=structured.get("research_summary", ""),
+    )
+
+    protocol_id = result.get("protocol_id", "")
+    logger.info(
+        "[Protocol] ✅ Protocol saved for %s/%s — id: %s, %d actions",
+        syndrome, county, protocol_id,
+        len(structured.get("immediate_actions", [])),
+    )
+
+    return {
+        "protocol_id":        protocol_id,
+        "syndrome":           syndrome,
+        "county":             county,
+        "alert_level":        alert_level,
+        "immediate_actions":  structured.get("immediate_actions", []),
+        "chw_actions":        structured.get("chw_actions", []),
+        "follow_up_days":     structured.get("follow_up_days", [1, 7, 14]),
+        "reporting_threshold": structured.get("reporting_threshold", 5),
+        "who_idsr_code":      structured.get("who_idsr_code", "UNK"),
+        "source_authority":   "AI-researched (WHO/CDC/MOH)",
+        "sources_consulted":  sources[:10],
+        "research_summary":   structured.get("research_summary", ""),
+        "status":             "active",
+    }

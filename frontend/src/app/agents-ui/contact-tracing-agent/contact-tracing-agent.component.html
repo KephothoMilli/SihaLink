@@ -1,4 +1,4 @@
-<!-- Contact Tracing Agent UI — Angular Material 3 -->
+<!-- Contact Tracing Portal — Material Table with pagination -->
 
 <div class="ct-container">
 
@@ -8,8 +8,8 @@
     <div>
       <h1 class="mat-headline-medium">Contact Tracing Portal</h1>
       <p class="mat-body-medium subtitle">
-        Identify, track, and resolve all persons exposed to confirmed disease cases.
-        Builds exposure networks from encounter data and assigns CHW visit tasks.
+        Track all persons exposed to confirmed disease cases across Kenya.
+        Traces are initiated automatically for RED-triage encounters.
       </p>
     </div>
   </div>
@@ -18,261 +18,288 @@
   <div class="error-banner">
     <span class="material-symbols-outlined">warning</span>
     {{ error }}
+    <button mat-button (click)="error = null">Dismiss</button>
   </div>
   }
 
   <mat-tab-group animationDuration="200ms">
 
-    <!-- ═══════════════ TAB 1 — ACTIVE TRACES ═══════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════
+         TAB 1 — ACTIVE TRACES (Material Table + Paginator)
+         ═══════════════════════════════════════════════════════════════════ -->
     <mat-tab>
       <ng-template mat-tab-label>
         <span class="material-symbols-outlined tab-icon">manage_search</span>
         Active Traces
-        @if (activeTraces.length > 0) {
-        <span class="tab-badge">{{ activeTraces.length }}</span>
-        }
+        @if (tracesTotal > 0) { <span class="tab-badge">{{ tracesTotal }}</span> }
       </ng-template>
 
       <div class="tab-content">
-        <!-- Filters -->
+
+        <!-- Filter row -->
         <div class="filter-row">
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Filter by County</mat-label>
-            <mat-select [(ngModel)]="filterCounty">
+            <mat-label>County</mat-label>
+            <mat-select [(ngModel)]="filterCounty" (selectionChange)="applyFilters()">
               <mat-option value="">All Counties</mat-option>
-              @for (c of counties; track c) {
-              <mat-option [value]="c">{{ c }}</mat-option>
-              }
+              @for (c of counties; track c) { <mat-option [value]="c">{{ c }}</mat-option> }
             </mat-select>
           </mat-form-field>
+
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Filter by Syndrome</mat-label>
-            <mat-select [(ngModel)]="filterSyndrome">
+            <mat-label>Syndrome</mat-label>
+            <mat-select [(ngModel)]="filterSyndrome" (selectionChange)="applyFilters()">
               <mat-option value="">All Syndromes</mat-option>
               @for (s of syndromes; track s) {
               <mat-option [value]="s">{{ formatSyndrome(s) }}</mat-option>
               }
             </mat-select>
           </mat-form-field>
-          <button mat-flat-button color="primary" (click)="loadActiveTraces()" [disabled]="tracesLoading">
-            @if (tracesLoading) {
-            <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-            } @else {
-            <span class="material-symbols-outlined btn-icon">refresh</span>
-            }
-            Refresh
+
+          <button mat-flat-button color="primary" (click)="applyFilters()" [disabled]="tracesLoading">
+            @if (tracesLoading) { <mat-spinner diameter="18" class="inline-spinner"></mat-spinner> }
+            @else { <span class="material-symbols-outlined btn-icon">search</span> }
+            Filter
+          </button>
+
+          <button mat-stroked-button (click)="filterCounty=''; filterSyndrome=''; applyFilters()">
+            <span class="material-symbols-outlined btn-icon">clear</span> Clear
           </button>
         </div>
 
-        @if (tracesLoading) {
-        <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-        }
+        @if (tracesLoading) { <mat-progress-bar mode="indeterminate" class="load-bar"></mat-progress-bar> }
 
-        <!-- Trace cards -->
-        @if (activeTraces.length === 0 && !tracesLoading) {
+        <!-- Empty state -->
+        @if (tracesDataSource.data.length === 0 && !tracesLoading) {
         <mat-card appearance="outlined" class="empty-card">
           <mat-card-content>
             <span class="material-symbols-outlined empty-icon">person_search</span>
-            <p class="mat-body-medium">No active contact traces. They are initiated automatically for RED encounters.
-            </p>
+            <p>No active contact traces. They are initiated automatically for RED encounters.</p>
           </mat-card-content>
         </mat-card>
         }
 
-        <div class="traces-grid">
-          @for (trace of activeTraces; track trace.trace_id) {
-          <mat-card appearance="outlined" class="trace-card"
-            [style.border-left-color]="escalationColor(trace.escalation_level)">
-            <mat-card-content>
+        <!-- Material Table -->
+        @if (tracesDataSource.data.length > 0) {
+        <div class="table-container mat-elevation-z1">
+          <table mat-table [dataSource]="tracesDataSource" multiTemplateDataRows matSort #tracesSort="matSort" class="traces-table">
 
-              <!-- Header row -->
-              <div class="trace-header">
-                <div>
-                  <p class="mat-label-small muted">Trace ID</p>
-                  <p class="mat-title-small trace-id">{{ trace.trace_id }}</p>
+            <!-- Trace ID -->
+            <ng-container matColumnDef="trace_id">
+              <th mat-header-cell *matHeaderCellDef mat-sort-header>Trace ID</th>
+              <td mat-cell *matCellDef="let row">
+                <code class="trace-id-cell">{{ row.trace_id }}</code>
+              </td>
+            </ng-container>
+
+            <!-- Syndrome -->
+            <ng-container matColumnDef="syndrome">
+              <th mat-header-cell *matHeaderCellDef mat-sort-header>Syndrome</th>
+              <td mat-cell *matCellDef="let row">
+                <span class="syndrome-chip">{{ formatSyndrome(row.syndrome) }}</span>
+              </td>
+            </ng-container>
+
+            <!-- Location -->
+            <ng-container matColumnDef="location">
+              <th mat-header-cell *matHeaderCellDef>Location</th>
+              <td mat-cell *matCellDef="let row">
+                {{ row.index_case?.location?.ward }}, {{ row.index_case?.location?.county }}
+              </td>
+            </ng-container>
+
+            <!-- Progress -->
+            <ng-container matColumnDef="progress">
+              <th mat-header-cell *matHeaderCellDef>Progress</th>
+              <td mat-cell *matCellDef="let row" class="progress-cell">
+                <div class="mini-progress-label">
+                  {{ row.contacted_count }}/{{ row.total_contacts }}
+                  ({{ completionPct(row) }}%)
                 </div>
-                <span class="syndrome-chip">{{ formatSyndrome(trace.syndrome) }}</span>
-                <span class="escalation-chip" [style.color]="escalationColor(trace.escalation_level)"
-                  [style.border-color]="escalationColor(trace.escalation_level)">
-                  {{ trace.escalation_level ?? 'COUNTY' }}
-                </span>
-              </div>
-
-              <!-- Location & date -->
-              <p class="mat-body-small muted">
-                <span class="material-symbols-outlined inline-icon">location_on</span>
-                {{ trace.index_case.location.ward }}, {{ trace.index_case.location.county }}
-                &nbsp;·&nbsp;
-                <span class="material-symbols-outlined inline-icon">schedule</span>
-                {{ trace.created_at | date:'dd MMM HH:mm' }}
-              </p>
-
-              <!-- Progress bar -->
-              <div class="progress-section">
-                <div class="progress-labels">
-                  <span class="mat-label-small">Contacts visited</span>
-                  <span class="mat-label-small">
-                    {{ trace.contacted_count }}/{{ trace.total_contacts }}
-                    ({{ completionPct(trace) }}%)
-                  </span>
-                </div>
-                <mat-progress-bar mode="determinate" [value]="completionPct(trace)" color="primary">
+                <mat-progress-bar mode="determinate" [value]="completionPct(row)" color="primary"
+                  style="height:6px;border-radius:3px">
                 </mat-progress-bar>
-              </div>
+              </td>
+            </ng-container>
 
-              <!-- Stats row -->
-              <div class="stats-row">
-                <div class="stat-item">
-                  <span class="material-symbols-outlined" style="color:#d32f2f">warning</span>
-                  <span class="mat-body-small">{{ trace.confirmed_cases }} confirmed</span>
-                </div>
-                <div class="stat-item">
-                  <span class="material-symbols-outlined" style="color:#388e3c">check_circle</span>
-                  <span class="mat-body-small">
-                    {{ trace.total_contacts - trace.contacted_count }} pending
+            <!-- Contacts summary -->
+            <ng-container matColumnDef="contacts">
+              <th mat-header-cell *matHeaderCellDef>Contacts</th>
+              <td mat-cell *matCellDef="let row">
+                <div class="contacts-summary">
+                  <span class="cs-item" style="color:#d32f2f">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem">warning</span>
+                    {{ row.confirmed_cases }}
+                  </span>
+                  <span class="cs-item" style="color:#388e3c">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem">check_circle</span>
+                    {{ row.total_contacts - row.contacted_count }}
                   </span>
                 </div>
-              </div>
+              </td>
+            </ng-container>
 
-              <!-- Action buttons -->
-              <div class="card-actions">
-                <button mat-stroked-button (click)="openInlineDetail(trace.trace_id)">
-                  <span class="material-symbols-outlined btn-icon">
-                    {{ isInlineExpanded(trace.trace_id) ? 'expand_less' : 'open_in_new' }}
-                  </span>
-                  {{ isInlineExpanded(trace.trace_id) ? 'Hide Details' : 'View Detail' }}
-                </button>
-                <button mat-stroked-button color="warn" (click)="resolveTrace(trace.trace_id)"
-                  [matTooltip]="'Mark all contacts resolved'">
-                  <span class="material-symbols-outlined btn-icon">task_alt</span>
-                  Resolve
-                </button>
-              </div>
-            </mat-card-content>
-          </mat-card>
+            <!-- Escalation -->
+            <ng-container matColumnDef="escalation">
+              <th mat-header-cell *matHeaderCellDef>Level</th>
+              <td mat-cell *matCellDef="let row">
+                <span class="escalation-chip" [style.color]="escalationColor(row.escalation_level)"
+                  [style.border-color]="escalationColor(row.escalation_level)">
+                  {{ row.escalation_level ?? 'COUNTY' }}
+                </span>
+              </td>
+            </ng-container>
 
-          <!-- ── INLINE DETAIL PANEL (below each card) ─────────── -->
-          @if (isInlineExpanded(trace.trace_id)) {
-          <div class="inline-detail-panel">
-            @if (inlineLoading) {
-            <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-            }
-            @if (!inlineLoading && inlineTrace) {
-            <!-- Analytics row -->
-            <div class="inline-analytics-row">
-              <div class="inline-stat">
-                <span class="material-symbols-outlined" style="color:#0288d1">group</span>
-                <div>
-                  <p class="inline-stat-val">{{ inlineTrace.total_contacts }}</p>
-                  <p class="inline-stat-lbl">Total Contacts</p>
+            <!-- Actions -->
+            <ng-container matColumnDef="actions">
+              <th mat-header-cell *matHeaderCellDef></th>
+              <td mat-cell *matCellDef="let row">
+                <div class="row-actions">
+                  <button mat-icon-button (click)="$event.stopPropagation(); toggleRow(row)"
+                    [matTooltip]="isExpanded(row) ? 'Collapse' : 'View Details'">
+                    <span class="material-symbols-outlined">
+                      {{ isExpanded(row) ? 'expand_less' : 'expand_more' }}
+                    </span>
+                  </button>
+                  <button mat-icon-button color="warn" (click)="$event.stopPropagation(); resolveTrace(row.trace_id)"
+                    matTooltip="Resolve trace">
+                    <span class="material-symbols-outlined">task_alt</span>
+                  </button>
                 </div>
-              </div>
-              <div class="inline-stat">
-                <span class="material-symbols-outlined" style="color:#388e3c">check_circle</span>
-                <div>
-                  <p class="inline-stat-val">{{ completionPct(inlineTrace) }}%</p>
-                  <p class="inline-stat-lbl">Completion</p>
-                </div>
-              </div>
-              <div class="inline-stat">
-                <span class="material-symbols-outlined" style="color:#d32f2f">coronavirus</span>
-                <div>
-                  <p class="inline-stat-val">{{ inlineTrace.confirmed_cases }}</p>
-                  <p class="inline-stat-lbl">Confirmed</p>
-                </div>
-              </div>
-              <div class="inline-stat">
-                <span class="material-symbols-outlined" style="color:#f57c00">percent</span>
-                <div>
-                  <p class="inline-stat-val">{{ inlineTrace.analytics?.secondary_attack_rate ?? 0 }}%</p>
-                  <p class="inline-stat-lbl">SAR</p>
-                </div>
-              </div>
-              @if (inlineTrace.analytics?.overdue) {
-              <div class="inline-stat">
-                <span class="material-symbols-outlined" style="color:#e65100">schedule</span>
-                <div>
-                  <p class="inline-stat-val" style="color:#e65100">{{ inlineTrace.analytics!.overdue }}</p>
-                  <p class="inline-stat-lbl">Overdue</p>
-                </div>
-              </div>
-              }
-            </div>
+              </td>
+            </ng-container>
 
-            <!-- Status histogram -->
-            @if (inlineTrace.analytics?.status_histogram) {
-            <div class="inline-histogram">
-              @for (key of histogramKeys(inlineTrace.analytics!.status_histogram); track key) {
-              <div class="inline-bar-row">
-                <span class="inline-bar-lbl">{{ key }}</span>
-                <div class="inline-bar-track">
-                  <div class="inline-bar-fill" [style.width.%]="inlineTrace.total_contacts > 0
-                      ? (inlineTrace.analytics!.status_histogram[key] / inlineTrace.total_contacts) * 100
-                      : 0" [style.background]="statusColor(key)">
+            <!-- ── Expandable detail row ───────────────────────────────── -->
+            <ng-container matColumnDef="expandedDetail">
+              <td mat-cell *matCellDef="let row" [attr.colspan]="tracesColumns.length">
+                @if (isExpanded(row)) {
+                <div class="expanded-detail">
+                  @if (inlineLoading) { <mat-progress-bar mode="indeterminate"></mat-progress-bar> }
+                  @if (!inlineLoading && inlineTrace) {
+
+                  <!-- Stat chips -->
+                  <div class="detail-stats">
+                    <div class="ds">
+                      <span class="material-symbols-outlined" style="color:#0288d1">group</span>
+                      <span class="ds-val">{{ inlineTrace.total_contacts }}</span>
+                      <span class="ds-lbl">Contacts</span>
+                    </div>
+                    <div class="ds">
+                      <span class="material-symbols-outlined" style="color:#388e3c">check_circle</span>
+                      <span class="ds-val">{{ completionPct(inlineTrace) }}%</span>
+                      <span class="ds-lbl">Visited</span>
+                    </div>
+                    <div class="ds">
+                      <span class="material-symbols-outlined" style="color:#d32f2f">coronavirus</span>
+                      <span class="ds-val">{{ inlineTrace.confirmed_cases }}</span>
+                      <span class="ds-lbl">Confirmed</span>
+                    </div>
+                    <div class="ds">
+                      <span class="material-symbols-outlined" style="color:#f57c00">percent</span>
+                      <span class="ds-val">{{ inlineTrace.analytics?.secondary_attack_rate ?? 0 }}%</span>
+                      <span class="ds-lbl">SAR</span>
+                    </div>
+                    @if (inlineTrace.analytics?.overdue) {
+                    <div class="ds">
+                      <span class="material-symbols-outlined" style="color:#e65100">schedule</span>
+                      <span class="ds-val" style="color:#e65100">{{ inlineTrace.analytics!.overdue }}</span>
+                      <span class="ds-lbl">Overdue</span>
+                    </div>
+                    }
                   </div>
-                </div>
-                <span class="inline-bar-val">{{ inlineTrace.analytics!.status_histogram[key] }}</span>
-              </div>
-              }
-            </div>
-            }
 
-            <!-- Contact list (top 8 contacts) -->
-            @if (inlineTrace.contacts?.length) {
-            <div class="inline-contacts-header">
-              <span class="mat-label-small">Contacts ({{ inlineTrace.contacts!.length }} total)</span>
-              <button mat-button (click)="loadTraceDetail(inlineTrace.trace_id)" style="font-size:0.75rem">
-                View all in Trace Detail tab →
-              </button>
-            </div>
-            <div class="inline-contacts-list">
-              @for (c of inlineTrace.contacts!.slice(0, 8); track c.contact_id) {
-              <div class="inline-contact-row"
-                [class.contact-overdue]="c.status === 'identified' && c.due_date && c.due_date < currentDate">
-                <span class="tier-badge" [style.background]="tierColor(c.risk_tier) + '20'"
-                  [style.color]="tierColor(c.risk_tier)">{{ c.risk_tier }}</span>
-                <span class="mono" style="font-size:0.75rem">{{ c.contact_id }}</span>
-                <span>{{ c.location.ward }}, {{ c.location.county }}</span>
-                <span class="status-dot" [style.background]="statusColor(c.status)">{{ c.status }}</span>
-                <span style="font-size:0.75rem;color:var(--mat-sys-on-surface-variant)">
-                  Due: {{ c.due_date | date:'dd MMM' }}
-                </span>
-              </div>
-              }
-            </div>
-            }
+                  <!-- Mini histogram -->
+                  @if (inlineTrace.analytics?.status_histogram) {
+                  <div class="mini-histogram">
+                    @for (key of histogramKeys(inlineTrace.analytics!.status_histogram); track key) {
+                    <div class="mh-row">
+                      <span class="mh-lbl">{{ key }}</span>
+                      <div class="mh-track">
+                        <div class="mh-fill" [style.width.%]="inlineTrace.total_contacts > 0
+                            ? (inlineTrace.analytics!.status_histogram[key] / inlineTrace.total_contacts)*100 : 0"
+                          [style.background]="statusColor(key)">
+                        </div>
+                      </div>
+                      <span class="mh-val">{{ inlineTrace.analytics!.status_histogram[key] }}</span>
+                    </div>
+                    }
+                  </div>
+                  }
 
-            <!-- History (last 3 events) -->
-            @if (inlineTrace.history?.length) {
-            <div class="inline-history">
-              <span class="mat-label-small" style="font-weight:700;text-transform:uppercase;letter-spacing:.04em;">
-                Recent Activity
-              </span>
-              @for (h of inlineTrace.history!.slice(-3).reverse(); track h.timestamp) {
-              <div class="inline-history-item">
-                <span class="material-symbols-outlined" style="font-size:0.9rem;color:var(--mat-sys-primary)">
-                  radio_button_checked
-                </span>
-                <div>
-                  <p style="font-size:0.8rem;font-weight:600">{{ h.event | titlecase }}
-                    — {{ h.timestamp | date:'dd MMM HH:mm' }}</p>
-                  @if (h.detail) {
-                  <p style="font-size:0.75rem;color:var(--mat-sys-on-surface-variant)">{{ h.detail }}</p>
+                  <!-- Top contacts preview -->
+                  @if (inlineTrace.contacts?.length) {
+                  <div class="contacts-preview">
+                    <div class="cp-header">
+                      <span class="mat-label-small">
+                        Top contacts ({{ inlineTrace.contacts!.length }} total)
+                      </span>
+                      <button mat-button (click)="loadTraceDetail(inlineTrace.trace_id)" style="font-size:0.75rem">
+                        Full detail →
+                      </button>
+                    </div>
+                    @for (c of inlineTrace.contacts!.slice(0,5); track c.contact_id) {
+                    <div class="cp-row"
+                      [class.cp-overdue]="c.status==='identified' && c.due_date && c.due_date < currentDate">
+                      <span class="tier-badge" [style.background]="tierColor(c.risk_tier)+'20'"
+                        [style.color]="tierColor(c.risk_tier)">{{ c.risk_tier }}</span>
+                      <code style="font-size:0.75rem">{{ c.contact_id }}</code>
+                      <span style="font-size:0.82rem">{{ c.location.ward }}, {{ c.location.county }}</span>
+                      <span class="status-dot" [style.background]="statusColor(c.status)">{{ c.status }}</span>
+                      <span style="font-size:0.75rem;color:var(--mat-sys-on-surface-variant)">
+                        {{ c.due_date | date:'dd MMM' }}
+                      </span>
+                    </div>
+                    }
+                  </div>
+                  }
+
+                  <!-- Recent history -->
+                  @if (inlineTrace.history?.length) {
+                  <div class="inline-history">
+                    @for (h of inlineTrace.history!.slice(-3).reverse(); track h.timestamp) {
+                    <div class="ih-row">
+                      <span class="material-symbols-outlined" style="font-size:0.9rem;color:var(--mat-sys-primary)">
+                        radio_button_checked
+                      </span>
+                      <div>
+                        <p style="font-size:0.8rem;font-weight:600;margin:0">
+                          {{ h.event | titlecase }} — {{ h.timestamp | date:'dd MMM HH:mm' }}
+                        </p>
+                        @if (h.detail) {
+                        <p style="font-size:0.75rem;color:var(--mat-sys-on-surface-variant);margin:0">{{ h.detail }}</p>
+                        }
+                      </div>
+                    </div>
+                    }
+                  </div>
+                  }
+
                   }
                 </div>
-              </div>
-              }
-            </div>
-            }
-            }
-          </div>
-          }
-          }
+                }
+              </td>
+            </ng-container>
+
+            <tr mat-header-row *matHeaderRowDef="tracesColumns; sticky: true"></tr>
+            <tr mat-row *matRowDef="let row; columns: tracesColumns" class="trace-row"
+              [class.trace-expanded]="isExpanded(row)" (click)="toggleRow(row)">
+            </tr>
+            <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
+          </table>
         </div>
+
+        <mat-paginator #tracesPaginator [length]="tracesTotal" [pageSize]="pageSize" [pageIndex]="pageIndex"
+          [pageSizeOptions]="pageSizeOptions" showFirstLastButtons (page)="onTracesPage($event)"
+          aria-label="Select page of traces">
+        </mat-paginator>
+        }
+
       </div>
     </mat-tab>
 
-    <!-- ═══════════════ TAB 2 — INITIATE TRACE ══════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════
+         TAB 2 — INITIATE TRACE
+         ═══════════════════════════════════════════════════════════════════ -->
     <mat-tab>
       <ng-template mat-tab-label>
         <span class="material-symbols-outlined tab-icon">add_circle</span>
@@ -285,56 +312,44 @@
             <span class="material-symbols-outlined card-icon" mat-card-avatar>person_search</span>
             <mat-card-title>Start a Contact Trace</mat-card-title>
             <mat-card-subtitle>
-              Traces run automatically for RED encounters. Use this to manually trace
-              a specific encounter or an entire outbreak cluster.
+              Traces run automatically for RED encounters. Use this form to manually start one.
             </mat-card-subtitle>
           </mat-card-header>
           <mat-card-content>
-
             <div class="init-form">
               <mat-form-field appearance="outline" class="full-width">
                 <mat-label>Encounter ID (index case)</mat-label>
-                <input matInput [(ngModel)]="initEncounterId" placeholder="e.g. 6840a3b2c1d4e5f678901234" />
+                <input matInput [(ngModel)]="initEncounterId" placeholder="e.g. enc-a1b2c3" />
                 <mat-hint>MongoDB encounter_id of the RED case to trace</mat-hint>
                 <mat-icon matSuffix>fingerprint</mat-icon>
               </mat-form-field>
-
               <div class="or-divider">
                 <mat-divider></mat-divider>
                 <span class="mat-label-small or-text">OR</span>
                 <mat-divider></mat-divider>
               </div>
-
               <mat-form-field appearance="outline" class="full-width">
                 <mat-label>Alert ID (trace whole outbreak cluster)</mat-label>
-                <input matInput [(ngModel)]="initAlertId"
-                  placeholder="e.g. Homa Bay-cholera-East Karachuonyo-2025010409" />
+                <input matInput [(ngModel)]="initAlertId" placeholder="e.g. Homa Bay-cholera-2025010409" />
                 <mat-hint>Traces ALL encounters in the outbreak cluster</mat-hint>
                 <mat-icon matSuffix>warning</mat-icon>
               </mat-form-field>
             </div>
-
             <div class="form-actions">
               <button mat-flat-button color="primary"
                 [disabled]="initiating || (!initEncounterId.trim() && !initAlertId.trim())" (click)="initiateTrace()">
-                @if (initiating) {
-                <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-                } @else {
-                <span class="material-symbols-outlined btn-icon">person_search</span>
-                }
+                @if (initiating) { <mat-spinner diameter="18" class="inline-spinner"></mat-spinner> }
+                @else { <span class="material-symbols-outlined btn-icon">person_search</span> }
                 {{ initiating ? 'Tracing…' : 'Start Contact Trace' }}
               </button>
             </div>
           </mat-card-content>
         </mat-card>
 
-        <!-- Result card after initiation -->
         @if (initResult) {
         <mat-card appearance="outlined" class="result-card">
           <mat-card-header>
-            <span class="material-symbols-outlined card-icon success-icon" mat-card-avatar>
-              check_circle
-            </span>
+            <span class="material-symbols-outlined card-icon success-icon" mat-card-avatar>check_circle</span>
             <mat-card-title>Trace Initiated</mat-card-title>
           </mat-card-header>
           <mat-card-content>
@@ -344,16 +359,8 @@
                 <p class="mat-body-large trace-id">{{ initResult.trace_id }}</p>
               </div>
               <div class="result-item">
-                <p class="mat-label-small muted">Syndrome</p>
-                <p class="mat-body-large">{{ formatSyndrome(initResult.syndrome) }}</p>
-              </div>
-              <div class="result-item">
                 <p class="mat-label-small muted">Contacts Identified</p>
                 <p class="mat-body-large">{{ initResult.total_contacts }}</p>
-              </div>
-              <div class="result-item">
-                <p class="mat-label-small muted">CHWs Assigned</p>
-                <p class="mat-body-large">{{ initResult['assigned_chws']?.length ?? 0 }}</p>
               </div>
             </div>
             <button mat-stroked-button (click)="loadTraceDetail(initResult!.trace_id)">
@@ -366,7 +373,9 @@
       </div>
     </mat-tab>
 
-    <!-- ═══════════════ TAB 3 — TRACE DETAIL ════════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════
+         TAB 3 — TRACE DETAIL (contacts as Material Table)
+         ═══════════════════════════════════════════════════════════════════ -->
     <mat-tab>
       <ng-template mat-tab-label>
         <span class="material-symbols-outlined tab-icon">account_tree</span>
@@ -374,7 +383,7 @@
       </ng-template>
 
       <div class="tab-content">
-        <!-- Lookup form -->
+
         <div class="lookup-row">
           <mat-form-field appearance="outline" class="flex-grow">
             <mat-label>Trace ID</mat-label>
@@ -383,16 +392,14 @@
           </mat-form-field>
           <button mat-flat-button color="primary" (click)="loadTraceDetail()"
             [disabled]="detailLoading || !detailTraceId.trim()">
-            @if (detailLoading) {
-            <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-            } @else {
-            <span class="material-symbols-outlined btn-icon">search</span>
-            }
+            @if (detailLoading) { <mat-spinner diameter="18" class="inline-spinner"></mat-spinner> }
+            @else { <span class="material-symbols-outlined btn-icon">search</span> }
             Load
           </button>
         </div>
 
         @if (traceDetail) {
+
         <!-- Analytics cards -->
         <div class="analytics-grid">
           <mat-card appearance="outlined" class="analytic-card">
@@ -404,30 +411,24 @@
           </mat-card>
           <mat-card appearance="outlined" class="analytic-card">
             <mat-card-content>
-              <span class="material-symbols-outlined analytic-icon" style="color:#388e3c">
-                check_circle
-              </span>
+              <span class="material-symbols-outlined analytic-icon" style="color:#388e3c">check_circle</span>
               <p class="analytic-value">{{ traceDetail.analytics?.completion_rate_pct ?? completionPct(traceDetail) }}%
               </p>
-              <p class="mat-label-small muted">Completion Rate</p>
+              <p class="mat-label-small muted">Completion</p>
             </mat-card-content>
           </mat-card>
           <mat-card appearance="outlined" class="analytic-card">
             <mat-card-content>
-              <span class="material-symbols-outlined analytic-icon" style="color:#d32f2f">
-                coronavirus
-              </span>
+              <span class="material-symbols-outlined analytic-icon" style="color:#d32f2f">coronavirus</span>
               <p class="analytic-value">{{ traceDetail.confirmed_cases }}</p>
-              <p class="mat-label-small muted">Confirmed Cases</p>
+              <p class="mat-label-small muted">Confirmed</p>
             </mat-card-content>
           </mat-card>
           <mat-card appearance="outlined" class="analytic-card">
             <mat-card-content>
-              <span class="material-symbols-outlined analytic-icon" style="color:#f57c00">
-                percent
-              </span>
+              <span class="material-symbols-outlined analytic-icon" style="color:#f57c00">percent</span>
               <p class="analytic-value">{{ traceDetail.analytics?.secondary_attack_rate ?? 0 }}%</p>
-              <p class="mat-label-small muted">Household SAR</p>
+              <p class="mat-label-small muted">SAR</p>
             </mat-card-content>
           </mat-card>
         </div>
@@ -435,9 +436,7 @@
         <!-- Status histogram -->
         @if (traceDetail.analytics?.status_histogram) {
         <mat-card appearance="outlined" class="histogram-card">
-          <mat-card-header>
-            <mat-card-title>Contact Status Histogram</mat-card-title>
-          </mat-card-header>
+          <mat-card-header><mat-card-title>Contact Status</mat-card-title></mat-card-header>
           <mat-card-content>
             <div class="histogram">
               @for (key of histogramKeys(traceDetail.analytics!.status_histogram); track key) {
@@ -445,8 +444,8 @@
                 <span class="bar-label mat-label-small">{{ key }}</span>
                 <div class="bar-track">
                   <div class="bar-fill" [style.width.%]="traceDetail.total_contacts > 0
-                            ? (traceDetail.analytics!.status_histogram[key] / traceDetail.total_contacts) * 100
-                            : 0" [style.background]="statusColor(key)">
+                      ? (traceDetail.analytics!.status_histogram[key] / traceDetail.total_contacts)*100 : 0"
+                    [style.background]="statusColor(key)">
                   </div>
                 </div>
                 <span class="bar-value mat-label-small">
@@ -459,45 +458,69 @@
         </mat-card>
         }
 
-        <!-- Contact list -->
+        <!-- Contacts — Material Table with pagination -->
         @if (traceDetail.contacts?.length) {
         <mat-card appearance="outlined">
           <mat-card-header>
             <mat-card-title>Contact List</mat-card-title>
-            <mat-card-subtitle>
-              {{ traceDetail.contacts!.length }} contacts — click a row to update status
-            </mat-card-subtitle>
+            <mat-card-subtitle>{{ traceDetail.contacts!.length }} contacts — click Edit to update
+              status</mat-card-subtitle>
           </mat-card-header>
-          <mat-card-content>
-            <div class="contacts-table">
-              <div class="ct-header-row">
-                <span>Contact ID</span>
-                <span>Risk Tier</span>
-                <span>Location</span>
-                <span>Status</span>
-                <span>Due</span>
-                <span>Action</span>
-              </div>
-              @for (c of traceDetail.contacts; track c.contact_id) {
-              <div class="ct-row"
-                [class.ct-row-overdue]="c.status === 'identified' && c.due_date && c.due_date < currentDate">
-                <span class="mono mat-label-small">{{ c.contact_id }}</span>
-                <span class="tier-badge" [style.background]="tierColor(c.risk_tier) + '20'"
-                  [style.color]="tierColor(c.risk_tier)">
-                  {{ c.risk_tier }}
-                </span>
-                <span class="mat-body-small">{{ c.location.ward }}, {{ c.location.county }}</span>
-                <span class="status-dot" [style.background]="statusColor(c.status)">
-                  {{ c.status }}
-                </span>
-                <span class="mat-body-small">{{ c.due_date | date:'dd MMM' }}</span>
-                <button mat-icon-button (click)="openContactUpdate(c)"
-                  [disabled]="c.status === 'cleared' || c.status === 'confirmed'" matTooltip="Update contact status">
-                  <span class="material-symbols-outlined">edit</span>
-                </button>
-              </div>
-              }
-            </div>
+          <mat-card-content style="padding:0">
+            <table mat-table [dataSource]="contactsDataSource" class="contacts-mat-table">
+
+              <ng-container matColumnDef="contact_id">
+                <th mat-header-cell *matHeaderCellDef>Contact ID</th>
+                <td mat-cell *matCellDef="let c"><code class="mono-sm">{{ c.contact_id }}</code></td>
+              </ng-container>
+
+              <ng-container matColumnDef="risk_tier">
+                <th mat-header-cell *matHeaderCellDef>Risk Tier</th>
+                <td mat-cell *matCellDef="let c">
+                  <span class="tier-badge" [style.background]="tierColor(c.risk_tier)+'20'"
+                    [style.color]="tierColor(c.risk_tier)">{{ c.risk_tier }}</span>
+                </td>
+              </ng-container>
+
+              <ng-container matColumnDef="location">
+                <th mat-header-cell *matHeaderCellDef>Location</th>
+                <td mat-cell *matCellDef="let c">{{ c.location.ward }}, {{ c.location.county }}</td>
+              </ng-container>
+
+              <ng-container matColumnDef="status">
+                <th mat-header-cell *matHeaderCellDef>Status</th>
+                <td mat-cell *matCellDef="let c">
+                  <span class="status-dot" [style.background]="statusColor(c.status)">{{ c.status }}</span>
+                </td>
+              </ng-container>
+
+              <ng-container matColumnDef="due_date">
+                <th mat-header-cell *matHeaderCellDef>Due</th>
+                <td mat-cell *matCellDef="let c"
+                  [class.overdue-cell]="c.status==='identified' && c.due_date && c.due_date < currentDate">
+                  {{ c.due_date | date:'dd MMM' }}
+                </td>
+              </ng-container>
+
+              <ng-container matColumnDef="action">
+                <th mat-header-cell *matHeaderCellDef></th>
+                <td mat-cell *matCellDef="let c">
+                  <button mat-icon-button (click)="openContactUpdate(c)"
+                    [disabled]="c.status==='cleared' || c.status==='confirmed'" matTooltip="Update contact status">
+                    <span class="material-symbols-outlined">edit</span>
+                  </button>
+                </td>
+              </ng-container>
+
+              <tr mat-header-row *matHeaderRowDef="contactsColumns; sticky: true"></tr>
+              <tr mat-row *matRowDef="let row; columns: contactsColumns"
+                [class.ct-row-overdue]="row.status==='identified' && row.due_date && row.due_date < currentDate">
+              </tr>
+            </table>
+
+            <mat-paginator #contactsPaginator [pageSizeOptions]="[10, 25, 50]" showFirstLastButtons
+              aria-label="Select page of contacts">
+            </mat-paginator>
           </mat-card-content>
         </mat-card>
         }
@@ -507,7 +530,7 @@
         <mat-card appearance="outlined" class="update-panel">
           <mat-card-header>
             <span class="material-symbols-outlined card-icon" mat-card-avatar>edit</span>
-            <mat-card-title>Update Contact — {{ selectedContact.contact_id }}</mat-card-title>
+            <mat-card-title>Update — {{ selectedContact.contact_id }}</mat-card-title>
           </mat-card-header>
           <mat-card-content>
             <div class="update-form">
@@ -516,23 +539,20 @@
                 <mat-select [(ngModel)]="updateStatus">
                   <mat-option value="contacted">Contacted</mat-option>
                   <mat-option value="assessed">Assessed</mat-option>
-                  <mat-option value="cleared">Cleared (no symptoms)</mat-option>
+                  <mat-option value="cleared">Cleared</mat-option>
                   <mat-option value="confirmed">Confirmed case</mat-option>
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline" class="full-width">
-                <mat-label>Assessment Notes</mat-label>
-                <textarea matInput rows="2" [(ngModel)]="updateNotes" placeholder="CHW visit notes…"></textarea>
+                <mat-label>Notes</mat-label>
+                <textarea matInput rows="2" [(ngModel)]="updateNotes"></textarea>
               </mat-form-field>
             </div>
             <div class="form-actions">
               <button mat-flat-button color="primary" [disabled]="updateLoading" (click)="submitContactUpdate()">
-                @if (updateLoading) {
-                <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-                } @else {
-                <span class="material-symbols-outlined btn-icon">save</span>
-                }
-                {{ updateLoading ? 'Saving…' : 'Save Update' }}
+                @if (updateLoading) { <mat-spinner diameter="18" class="inline-spinner"></mat-spinner> }
+                @else { <span class="material-symbols-outlined btn-icon">save</span> }
+                {{ updateLoading ? 'Saving…' : 'Save' }}
               </button>
               <button mat-stroked-button (click)="selectedContact = null">Cancel</button>
             </div>
@@ -543,9 +563,7 @@
         <!-- History -->
         @if (traceDetail.history?.length) {
         <mat-card appearance="outlined" class="history-card">
-          <mat-card-header>
-            <mat-card-title>Trace History</mat-card-title>
-          </mat-card-header>
+          <mat-card-header><mat-card-title>Trace History</mat-card-title></mat-card-header>
           <mat-card-content>
             <div class="history-list">
               @for (h of traceDetail.history; track h.timestamp) {
@@ -554,9 +572,7 @@
                 <div>
                   <p class="mat-body-small"><strong>{{ h.event | titlecase }}</strong>
                     — {{ h.timestamp | date:'dd MMM HH:mm' }}</p>
-                  @if (h.detail) {
-                  <p class="mat-body-small muted">{{ h.detail }}</p>
-                  }
+                  @if (h.detail) { <p class="mat-body-small muted">{{ h.detail }}</p> }
                 </div>
               </div>
               }
@@ -565,6 +581,7 @@
         </mat-card>
         }
         }
+
       </div>
     </mat-tab>
 

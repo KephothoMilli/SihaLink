@@ -9,10 +9,11 @@
     "secure": false,
     "changeOrigin": true
   },
-  "/encounters": {
+  "/api/encounters": {
     "target": "http://localhost:8000",
     "secure": false,
-    "changeOrigin": true
+    "changeOrigin": true,
+    "pathRewrite": { "^/api/encounters": "/encounters" }
   },
   "/health": {
     "target": "http://localhost:8000",

@@ -249,7 +249,7 @@
         </div>
 
         <div class="step-actions">
-          <button mat-stroked-button matStepperPrevious>Back</button>
+          <button mat-stroked-button (click)="stepper.previous()">Back</button>
           <button mat-flat-button color="primary" (click)="advanceToIntake()">
             <span class="material-symbols-outlined btn-icon">arrow_forward</span>
             Continue to Intake
@@ -280,13 +280,13 @@
 
         <!-- Mode selector -->
         <div class="mode-tabs">
-          <button class="mode-tab" [class.active]="intakeMode==='voice'" (click)="intakeMode='voice'">
+          <button class="mode-tab" [class.active]="intakeMode==='voice'" (click)="setIntakeMode('voice')">
             <span class="material-symbols-outlined">mic</span> Voice
           </button>
-          <button class="mode-tab" [class.active]="intakeMode==='form'" (click)="intakeMode='form'">
+          <button class="mode-tab" [class.active]="intakeMode==='form'" (click)="setIntakeMode('form')">
             <span class="material-symbols-outlined">assignment</span> Clinical Form
           </button>
-          <button class="mode-tab" [class.active]="intakeMode==='telegram'" (click)="intakeMode='telegram'">
+          <button class="mode-tab" [class.active]="intakeMode==='telegram'" (click)="setIntakeMode('telegram')">
             <span class="material-symbols-outlined">forum</span> Telegram Relay
           </button>
         </div>
@@ -380,7 +380,7 @@
           </div>
           <mat-form-field appearance="outline" class="full-field">
             <mat-label>Telegram Message *</mat-label>
-            <textarea matInput rows="6" [(ngModel)]="telegramText"
+            <textarea matInput rows="6" [(ngModel)]="telegramText" (ngModelChange)="onTelegramChange()"
               placeholder="Paste CHV's full Telegram message here…"></textarea>
             <span class="material-symbols-outlined" matSuffix>chat</span>
             <mat-hint>Any language — auto-detected</mat-hint>
@@ -389,7 +389,7 @@
         }
 
         <div class="step-actions">
-          <button mat-stroked-button matStepperPrevious [disabled]="processing">Back</button>
+          <button mat-stroked-button (click)="stepper.previous()" [disabled]="processing">Back</button>
           <button mat-flat-button color="primary" (click)="launchPipeline()" [disabled]="!canLaunch() || processing">
             <span class="material-symbols-outlined btn-icon">rocket_launch</span>
             Launch Swarm Pipeline
@@ -401,7 +401,7 @@
     <!-- ════════════════════════════════════════════════════════════════════
          STEP 3 — SWARM PROCESSING (live pipeline view)
          ════════════════════════════════════════════════════════════════════ -->
-    <mat-step [editable]="false" label="Processing">
+    <mat-step [editable]="false" label="Processing" [completed]="!!extractionResult">
       <ng-template matStepLabel>
         <span class="step-label">
           <span class="material-symbols-outlined step-icon">hub</span>
@@ -453,6 +453,18 @@
           <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle">tag</span>
           Session: <code>{{ sessionId }}</code>
         </p>
+        }
+
+        <!-- Step actions — only shown when not actively processing -->
+        @if (!processing) {
+        <div class="step-actions">
+          <button mat-stroked-button (click)="stepper.previous()">
+            <span class="material-symbols-outlined btn-icon">arrow_back</span> Back
+          </button>
+          <button mat-flat-button color="primary" (click)="stepper.next()" [disabled]="!extractionResult">
+            <span class="material-symbols-outlined btn-icon">arrow_forward</span> View Result
+          </button>
+        </div>
         }
       </div>
     </mat-step>
@@ -656,9 +668,16 @@
         }
 
         <div class="result-footer">
+          <button mat-stroked-button (click)="stepper.previous()">
+            <span class="material-symbols-outlined btn-icon">arrow_back</span> Back
+          </button>
           <button mat-stroked-button (click)="reset()">
             <span class="material-symbols-outlined btn-icon">add_circle</span>
             New Encounter
+          </button>
+          <button mat-flat-button color="primary" (click)="goToEncounters()">
+            <span class="material-symbols-outlined btn-icon">table_view</span>
+            View in Case Encounters
           </button>
         </div>
 
@@ -667,6 +686,11 @@
         <div class="result-empty">
           <span class="material-symbols-outlined empty-icon">hourglass_bottom</span>
           <p>Pipeline in progress — results will appear here.</p>
+        </div>
+        <div class="step-actions">
+          <button mat-stroked-button matStepperPrevious>
+            <span class="material-symbols-outlined btn-icon">arrow_back</span> Back
+          </button>
         </div>
         }
 

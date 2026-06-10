@@ -58,34 +58,35 @@
 
   <div class="app-layout">
     <nav class="sidebar-nav" [class.active]="isMenuOpen">
-      <a (click)="navigateTo('/dashboard')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/dashboard'" class="nav-link" routerLinkActive="active" [routerLinkActiveOptions]="{exact:true}"
+        (click)="isMenuOpen=false">
         <span class="nav-icon">🖥️</span> Dashboard
       </a>
 
       <div class="nav-divider">Swarm Agents</div>
 
-      <a (click)="navigateTo('/agents/intake')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/agents/intake'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">🎤</span> Intake Agent
       </a>
-      <a (click)="navigateTo('/agents/geo')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/agents/geo'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">📍</span> Geo Agent
       </a>
-      <a (click)="navigateTo('/agents/data')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/agents/data'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">💾</span> Data Agent
       </a>
-      <a (click)="navigateTo('/agents/notify')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/agents/notify'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">📨</span> Notify Agent
       </a>
-      <a (click)="navigateTo('/agents/surveillance')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/agents/surveillance'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">📊</span> Surveillance
       </a>
-      <a (click)="navigateTo('/agents/contact-tracing')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/agents/contact-tracing'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">🔗</span> Contact Tracing
       </a>
 
       <div class="nav-divider">Database Logs</div>
 
-      <a (click)="navigateTo('/encounters')" class="nav-link" [routerLinkActive]="'active'">
+      <a [routerLink]="'/encounters'" class="nav-link" routerLinkActive="active" (click)="isMenuOpen=false">
         <span class="nav-icon">📋</span> Case Encounters
       </a>
     </nav>
@@ -136,45 +137,74 @@
 
   <!-- Frosted Glass Decision Gate Modal -->
   <div class="gate-overlay animate-fade-in" *ngIf="gateSession">
-    <div class="gate-modal" [class.red]="gateSession.data.geoEnriched?.alert_needed"
-      [class.yellow]="!gateSession.data.geoEnriched?.alert_needed">
+    <div class="gate-modal"
+      [class.red]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED'"
+      [class.yellow]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) !== 'RED'">
+
       <div class="gate-header">
-        <span class="gate-triage-badge">
-          {{ gateSession.data.geoEnriched?.alert_needed ? 'CRITICAL ALERT' : 'PENDING APPROVAL' }}
+        <span class="gate-triage-badge"
+          [style.background]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED' ? '#fee2e2' : '#fef3c7'"
+          [style.color]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED' ? '#dc2626' : '#b45309'">
+          {{ (gateSession.data?.gate_data?.triage_color
+          || gateSession.data?.extraction?.['triage_color']) === 'RED'
+          ? 'CRITICAL ALERT' : 'PENDING APPROVAL' }}
         </span>
         <h2>Clinical Gate Authorization</h2>
-        <p class="session-label">Session ID: <code>{{ gateSession.sessionId }}</code></p>
+        <p class="session-label">Session: <code>{{ gateSession.sessionId }}</code></p>
       </div>
 
       <div class="gate-body">
         <p class="gate-summary">
-          An encounter is pending manual confirmation. Verify the clinical and geographic details below before
-          dispatching notifications to community health networks.
+          An encounter is pending manual confirmation before dispatching a referral to the facility.
         </p>
 
         <div class="gate-preview-card">
           <div class="preview-item">
-            <span class="label">Symptoms Detected:</span>
-            <span class="value">{{ gateSession.data.extraction?.symptoms?.join(', ') || 'None' }}</span>
-          </div>
-          <div class="preview-item" *ngIf="gateSession.data.extraction?.vitals">
-            <span class="label">Key Vitals:</span>
-            <span class="value">
-              Temp: {{ gateSession.data.extraction.vitals.temperature || 'N/A' }}°C |
-              BP: {{ gateSession.data.extraction.vitals.blood_pressure || 'N/A' }}
+            <span class="label">Triage</span>
+            <span class="value"
+              [style.color]="(gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'RED' ? '#dc2626' :
+                             (gateSession.data?.gate_data?.triage_color || gateSession.data?.extraction?.['triage_color']) === 'YELLOW' ? '#d97706' : '#16a34a'"
+              [style.font-weight]="'700'">
+              {{ gateSession.data?.gate_data?.triage_color
+              || gateSession.data?.extraction?.['triage_color']
+              || 'YELLOW' }}
             </span>
           </div>
-          <div class="preview-item" *ngIf="gateSession.data.geoEnriched?.admin_hierarchy">
-            <span class="label">Location Details:</span>
+          <div class="preview-item">
+            <span class="label">Syndrome</span>
+            <span class="value" style="text-transform:capitalize">
+              {{ (gateSession.data?.gate_data?.syndrome
+              || gateSession.data?.extraction?.['syndrome']
+              || 'unknown').replace('_',' ') }}
+            </span>
+          </div>
+          <div class="preview-item">
+            <span class="label">Chief Complaint</span>
+            <span class="value">
+              {{ gateSession.data?.gate_data?.summary
+              || gateSession.data?.extraction?.['chief_complaint']
+              || gateSession.data?.extraction?.['original_complaint']
+              || 'See clinical records' }}
+            </span>
+          </div>
+          @if ((gateSession.data?.gate_data?.symptoms || gateSession.data?.extraction?.['symptoms'])?.length) {
+          <div class="preview-item">
+            <span class="label">Symptoms</span>
+            <span class="value">
+              {{ (gateSession.data?.gate_data?.symptoms || gateSession.data?.extraction?.['symptoms'] || []).join(', ')
+              }}
+            </span>
+          </div>
+          }
+          @if (gateSession.data?.geoEnriched?.admin_hierarchy?.county) {
+          <div class="preview-item">
+            <span class="label">Location</span>
             <span class="value">
               {{ gateSession.data.geoEnriched.admin_hierarchy.ward || 'Unknown' }} Ward,
-              {{ gateSession.data.geoEnriched.admin_hierarchy.county || 'Unknown' }} County
+              {{ gateSession.data.geoEnriched.admin_hierarchy.county }} County
             </span>
           </div>
-          <div class="preview-item" *ngIf="gateSession.data.geoEnriched?.recommended_facility">
-            <span class="label">Target Facility:</span>
-            <span class="valueHighlight">{{ gateSession.data.geoEnriched.recommended_facility.name }}</span>
-          </div>
+          }
         </div>
       </div>
 

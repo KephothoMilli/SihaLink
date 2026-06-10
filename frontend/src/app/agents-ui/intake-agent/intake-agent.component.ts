@@ -53,6 +53,7 @@ import {
 } from '../../../services/agents/intake-agent.service';
 import { RootAgentService } from '../../../services/root-agent.service';
 import { ApiService } from '../../../services/api.service';
+import { Router } from '@angular/router';
 
 export type UserRole = 'chw' | 'clinician' | null;
 
@@ -167,6 +168,11 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
   // ── Step 2 — Intake mode ──────────────────────────────────────────────
   intakeMode: 'voice' | 'form' | 'telegram' = 'voice';
 
+  setIntakeMode(mode: 'voice' | 'form' | 'telegram') {
+    this.intakeMode = mode;
+    this._saveMemory();
+  }
+
   // Voice
   isRecording = false;
   recordingTime = 0;
@@ -178,6 +184,10 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
 
   // Telegram relay
   telegramText = '';
+
+  onTelegramChange() {
+    this._saveMemory();
+  }
 
   // ── Step 3 — Swarm processing ─────────────────────────────────────────
   processing = false;
@@ -201,10 +211,13 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     private api: ApiService,
     private snack: MatSnackBar,
     private cd: ChangeDetectorRef,
+    private router: Router,
   ) {}
 
   ngOnInit() {
     this._buildForms();
+    this._loadMemory();
+    this._setupMemorySync();
     this._setupAudioRecording();
     this._subscribeToSessionUpdates();
   }
@@ -241,6 +254,57 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ── Web Memory ─────────────────────────────────────────────────────────
+
+  private _saveMemory() {
+    if (typeof localStorage === 'undefined') return;
+    const mem = {
+      identityForm: this.identityForm.value,
+      role: this.role,
+      identityVerified: this.identityVerified,
+      patientForm: this.patientForm.value,
+      symptoms: this.symptoms,
+      intakeMode: this.intakeMode,
+      telegramText: this.telegramText
+    };
+    localStorage.setItem('siha_intake_memory', JSON.stringify(mem));
+  }
+
+  private _loadMemory() {
+    if (typeof localStorage === 'undefined') return;
+    const stored = localStorage.getItem('siha_intake_memory');
+    if (!stored) return;
+    try {
+      const mem = JSON.parse(stored);
+      if (mem.identityForm) this.identityForm.patchValue(mem.identityForm, { emitEvent: false });
+      if (mem.role) {
+        this.role = mem.role as UserRole;
+        // setRole logic
+        if (this.role === 'clinician') {
+          this.identityForm.get('chw_id')?.setValidators([Validators.required, Validators.pattern(/^(CHW|DOC|NRS|CL)-[A-Z0-9]+$/i)]);
+        }
+        this.identityForm.get('chw_id')?.updateValueAndValidity({ emitEvent: false });
+      }
+      if (mem.identityVerified) this.identityVerified = mem.identityVerified;
+      if (mem.patientForm) this.patientForm.patchValue(mem.patientForm, { emitEvent: false });
+      if (mem.symptoms) this.symptoms = mem.symptoms;
+      if (mem.intakeMode) this.intakeMode = mem.intakeMode;
+      if (mem.telegramText) this.telegramText = mem.telegramText;
+      
+      // Auto-advance stepper to Step 1 if identity was already verified
+      if (this.identityVerified) {
+        setTimeout(() => this.stepper?.next(), 300);
+      }
+    } catch (e) {
+      console.warn('Failed to parse intake memory', e);
+    }
+  }
+
+  private _setupMemorySync() {
+    this.identityForm.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(() => this._saveMemory());
+    this.patientForm.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(() => this._saveMemory());
+  }
+
   // ── Step 0 — Identity verification ────────────────────────────────────
 
   setRole(r: UserRole) {
@@ -256,6 +320,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
         ]);
     }
     this.identityForm.get('chw_id')?.updateValueAndValidity();
+    this._saveMemory();
   }
 
   async verifyIdentity() {
@@ -278,6 +343,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
       this.identityVerified = true;
       // Pre-fill patient county from operator county
       this.patientForm.patchValue({ county });
+      this._saveMemory();
       setTimeout(() => this.stepper?.next(), 300);
     } catch (err) {
       // If the CHW doesn't exist yet, still allow access (they'll be created)
@@ -299,12 +365,16 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
 
   addSymptom() {
     const s = this.symptomInput.trim();
-    if (s && !this.symptoms.includes(s)) this.symptoms = [...this.symptoms, s];
+    if (s && !this.symptoms.includes(s)) {
+      this.symptoms = [...this.symptoms, s];
+      this._saveMemory();
+    }
     this.symptomInput = '';
   }
 
   removeSymptom(s: string) {
     this.symptoms = this.symptoms.filter((x) => x !== s);
+    this._saveMemory();
   }
 
   advanceToIntake() {
@@ -446,8 +516,12 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
       });
 
       // Extract result from session data
-      this.extractionResult = session.data?.extraction ?? null;
+      this.extractionResult =
+        (session.data?.extraction as ExtractionResult) ?? null;
       this._markAllPipelineDone();
+
+      // Force Angular to pick up the result before advancing
+      this.cd.detectChanges();
 
       // If DECISION_GATE — surface it
       if (session.state === 'DECISION_GATE') {
@@ -455,7 +529,10 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
       }
 
       // Advance to results step
-      setTimeout(() => this.stepper?.next(), 400);
+      setTimeout(() => {
+        this.stepper?.next();
+        this.cd.detectChanges();
+      }, 200);
     } catch (err) {
       this.snack.open(
         err instanceof Error ? err.message : 'Pipeline failed',
@@ -515,8 +592,17 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
           idx >= 0 ? Math.round((idx / (ORDER.length - 1)) * 100) : 0;
 
         if (session.state === 'DECISION_GATE') this.gateSession = session;
-        if (session.data?.extraction)
-          this.extractionResult = session.data.extraction;
+
+        // Populate result as soon as extraction data arrives — don't wait for COMPLETE
+        if (session.data?.extraction && !this.extractionResult) {
+          this.extractionResult = session.data.extraction as ExtractionResult;
+          this._markAllPipelineDone();
+          // Auto-advance stepper to the Result step
+          setTimeout(() => {
+            this.stepper?.next();
+            this.cd.detectChanges();
+          }, 200);
+        }
 
         this.cd.markForCheck();
       });
@@ -583,7 +669,17 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     this.clarificationText = '';
     this.identityForm.reset();
     this.patientForm.reset({ age_unit: 'years' });
+    
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('siha_intake_memory');
+    }
+    
     setTimeout(() => this.stepper?.reset(), 100);
+  }
+
+  /** Navigate to Case Encounters — where all logged intake cases are visible. */
+  goToEncounters() {
+    this.router.navigate(['/encounters']);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────

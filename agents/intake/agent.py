@@ -170,11 +170,14 @@ def extract_from_form(form_data: Dict[str, Any], session_id: str) -> Dict[str, A
     result["processing_ms"]      = round((time.time() - start) * 1000)
     result["detected_language"]  = translation["detected_language"] if translation else "English"
     result["original_complaint"] = chief_complaint
-    
+
+    # Normalize key names (primary_symptoms → symptoms, vital_signs → vitals)
+    result = _normalize_extraction(result)
+
     # Apply intelligent data correction using disease reference database
     _log(session_id, "FORM_INTAKE", "Applying data correction with disease intelligence...")
     result = correct_and_validate_extraction(result, session_id)
-    
+
     # Get actionable intelligence for other agents
     intelligence = get_actionable_intelligence(result)
     result["actionable_intelligence"] = intelligence
@@ -490,9 +493,9 @@ def clarify_extraction(
 
     try:
         from google import genai
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        client = _make_genai_client()
         resp = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model=_GEMINI_MODEL,
             contents=prompt,
         )
         raw = getattr(resp, "text", str(resp))
@@ -792,7 +795,7 @@ def get_actionable_intelligence(extraction: Dict[str, Any], county: str = "") ->
 
 root_agent = LlmAgent(
     name="intake_agent",
-    model="gemini-3.5-flash",
+    model="gemini-2.5-flash",
     description=(
         "SihaLink Intake Agent. Accepts clinical intake from web forms, Telegram, "
         "and other agents. Routes all input through the Multilingual Language Agent "
@@ -1038,21 +1041,35 @@ def _extract_from_text(english_text: str, session_id: str) -> Dict[str, Any]:
     if not english_text.strip():
         return _mock_extraction()
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    api_key   = os.getenv("GEMINI_API_KEY")
+    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() in ("1", "TRUE")
+    project    = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+
+    if not api_key and not use_vertex:
         _log(session_id, "EXTRACTION", "GEMINI_API_KEY not set — using mock", "WARNING")
         return _mock_extraction()
 
     try:
         from google import genai
-        client = genai.Client(api_key=api_key)
+        client = _make_genai_client()
         prompt = _build_text_extraction_prompt(english_text)
         _log(session_id, "EXTRACTION", "Calling Gemini for clinical extraction...")
         resp = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model=_GEMINI_MODEL,
             contents=prompt,
         )
-        raw = getattr(resp, "text", str(resp))
+        raw = getattr(resp, "text", "")
+        if not raw:
+            # Some Vertex responses need part iteration
+            try:
+                raw = "".join(
+                    p.text for p in (resp.candidates[0].content.parts or [])
+                    if hasattr(p, "text") and p.text
+                )
+            except Exception:
+                pass
+        if not raw:
+            raise ValueError("Gemini returned empty response")
         result = _parse_clinical_json(raw)
         _log(session_id, "EXTRACTION",
              f"Raw extraction: syndrome={result.get('syndrome')} "
@@ -1060,6 +1077,7 @@ def _extract_from_text(english_text: str, session_id: str) -> Dict[str, Any]:
         return result
     except Exception as exc:
         _log(session_id, "EXTRACTION", f"Gemini call failed: {exc}", "ERROR")
+        # Return error dict — caller (extract_from_form) overlays form fields anyway
         return {"error": "extraction_failed", "details": str(exc)}
 
 
@@ -1081,11 +1099,11 @@ def _extract_from_audio(audio_base64: str, session_id: str) -> Dict[str, Any]:
             
         from google import genai
         from google.genai import types as genai_t
-        client = genai.Client(api_key=api_key)
+        client = _make_genai_client()
         prompt = _build_audio_extraction_prompt()
         _log(session_id, "EXTRACTION", "Calling Gemini multimodal for audio extraction...")
         resp = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model=_GEMINI_MODEL,
             contents=[
                 prompt,
                 genai_t.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
@@ -1128,7 +1146,7 @@ def _transcribe_audio(audio_base64: str, session_id: str) -> Optional[str]:
             
         from google import genai
         from google.genai import types as genai_t
-        client = genai.Client(api_key=api_key)
+        client = _make_genai_client()
         prompt = (
             "Transcribe this audio recording from a Community Health Volunteer in Kenya. "
             "The audio may be in Dholuo, Swahili, Kikuyu, Somali, Luhya, Kamba, Mijikenda, "
@@ -1137,7 +1155,7 @@ def _transcribe_audio(audio_base64: str, session_id: str) -> Optional[str]:
         )
         _log(session_id, "TRANSCRIPTION", "Calling Gemini for audio transcription...")
         resp = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model=_GEMINI_MODEL,
             contents=[
                 prompt,
                 genai_t.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
@@ -1244,15 +1262,82 @@ in the detected language.
 """
 
 
+def _make_genai_client():
+    """
+    Return a google-genai Client configured for Vertex AI or AI Studio
+    based on the GOOGLE_GENAI_USE_VERTEXAI environment variable.
+    This is the single source of truth for all Gemini calls in intake.
+    """
+    from google import genai
+    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() in ("1", "TRUE")
+    project    = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    if use_vertex and project:
+        return genai.Client(
+            vertexai=True,
+            project=project,
+            location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        )
+    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+
+_GEMINI_MODEL = "gemini-2.5-flash"   # single constant — update here when model changes
+
+
+def _normalize_extraction(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize key names so the stored document always uses consistent schema
+    regardless of which extraction path produced it.
+
+    Aliases:
+      primary_symptoms  → symptoms       (Gemini uses primary_symptoms)
+      vital_signs       → vitals         (Gemini uses vital_signs)
+      vital_signs.temperature_c → vitals.temperature
+      vital_signs.heart_rate    → vitals.pulse
+    """
+    # primary_symptoms → symptoms
+    if "primary_symptoms" in result and "symptoms" not in result:
+        result["symptoms"] = result["primary_symptoms"]
+    elif "primary_symptoms" in result:
+        # merge both lists, deduplicate
+        combined = list(dict.fromkeys(
+            result.get("symptoms", []) + result.get("primary_symptoms", [])
+        ))
+        result["symptoms"] = combined
+    result.pop("primary_symptoms", None)
+
+    # vital_signs → vitals (with key normalization)
+    if "vital_signs" in result and "vitals" not in result:
+        vs = result.pop("vital_signs")
+        vitals: Dict[str, Any] = {}
+        # temperature_c → temperature
+        if "temperature_c" in vs:
+            vitals["temperature"] = vs.pop("temperature_c")
+        if "temperature" in vs:
+            vitals["temperature"] = vs["temperature"]
+        # heart_rate → pulse
+        if "heart_rate" in vs:
+            vitals["pulse"] = vs.pop("heart_rate")
+        if "pulse" in vs:
+            vitals["pulse"] = vs["pulse"]
+        # pass remaining keys through (respiratory_rate, blood_pressure, spo2)
+        vitals.update({k: v for k, v in vs.items() if k not in vitals})
+        result["vitals"] = vitals
+    elif "vital_signs" in result:
+        result.pop("vital_signs", None)  # already have vitals
+
+    return result
+
+
 def _parse_clinical_json(raw_text: str) -> Dict[str, Any]:
-    """Strip markdown fences and parse clinical JSON."""
+    """Strip markdown fences, parse clinical JSON, and normalize key names."""
     try:
         clean = raw_text.replace("```json", "").replace("```", "").strip()
         start = clean.find("{")
         end   = clean.rfind("}") + 1
         if start >= 0 and end > start:
             clean = clean[start:end]
-        return json.loads(clean)
+        result = json.loads(clean)
+        return _normalize_extraction(result)
     except Exception as exc:
         logger.warning("JSON parse failed: %s | raw: %.200s", exc, raw_text)
         return {"error": "parse_failed", "raw": raw_text[:500]}
@@ -1260,7 +1345,7 @@ def _parse_clinical_json(raw_text: str) -> Dict[str, Any]:
 
 def _mock_extraction() -> Dict[str, Any]:
     """Realistic mock for dev/testing when GEMINI_API_KEY is not set."""
-    return {
+    return _normalize_extraction({
         "language": "Swahili",
         "syndrome": "acute_watery_diarrhea",
         "primary_symptoms": ["watery_diarrhea", "vomiting", "dehydration"],
@@ -1278,4 +1363,4 @@ def _mock_extraction() -> Dict[str, Any]:
         "clarification_question": None,
         "source": IntakeSource.AUDIO,
         "_mock": True,
-    }
+    })

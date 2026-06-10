@@ -164,12 +164,36 @@ class Orchestrator:
                 chat_id = session_id.split("-")[1]
                 await self.notify.dispatch_message(chat_id, text)
 
+            # ── Build encounter envelope ───────────────────────────────────
+            # The intake agent returns a flat clinical dict.  Wrap it under
+            # the 'extracted' key so the final MongoDB document matches the
+            # structure the frontend and downstream agents expect:
+            #   { extracted: {syndrome, triage_color, …}, admin_hierarchy: {…}, … }
+            chw_id = (
+                extracted_json.get("chw_id")
+                or (telegram_payload or {}).get("chw_id")
+                or (form_data or {}).get("chw_id")
+                or "unknown"
+            )
+            encounter_envelope = {
+                "extracted": extracted_json,
+                "chw_id": chw_id,
+                "session_id": session_id,
+                # Pass county hint for GPS-less enrichment (web form / no device GPS)
+                "county": (
+                    extracted_json.get("county")
+                    or (form_data or {}).get("county")
+                    or (telegram_payload or {}).get("county")
+                    or ""
+                ),
+            }
+
             # 2. GEOCODING — GPS → admin hierarchy + facilities
             enriched_json = await self._transition(
                 session_id,
                 EncounterState.GEOCODING,
                 self.geo.enrich_location,
-                extracted_json,
+                encounter_envelope,
                 coords,
             )
 
@@ -338,9 +362,14 @@ class Orchestrator:
         - YELLOW triage: auto-queue (return False) on timeout
         """
         self.sessions[session_id]["state"] = EncounterState.DECISION_GATE
+        # Store the full extracted data so the frontend poll can display it
+        extracted = data.get("extracted", {})
+        self.sessions[session_id]["extracted"] = extracted
         self.sessions[session_id]["gate_data"] = {
-            "triage_color": data.get("extracted", {}).get("triage_color", "YELLOW"),
-            "summary": data.get("extracted", {}).get("chief_complaint", ""),
+            "triage_color": extracted.get("triage_color") or extracted.get("triage_color", "YELLOW"),
+            "summary":      extracted.get("chief_complaint") or extracted.get("original_complaint", ""),
+            "syndrome":     extracted.get("syndrome", ""),
+            "symptoms":     extracted.get("symptoms", []),
             "encounter_id": data.get("encounter_id"),
         }
         logger.info("⏳ Waiting for CHV confirmation — session %s", session_id)

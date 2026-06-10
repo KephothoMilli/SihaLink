@@ -215,9 +215,23 @@ td.mat-cell {
 }
 
 /* ── Expanded detail row ─────────────────────────────────────────────── */
-.detail-row td {
+.detail-row td,
+.detail-row .mat-cell {
   padding: 0 !important;
   border-bottom: none !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+.detail-row--open td,
+.detail-row--open .mat-cell {
+  height: auto !important;
+  overflow: visible !important;
+}
+.detail-cell {
+  padding: 0 !important;
+}
+.detail-expansion-wrapper {
+  overflow: hidden;
 }
 .detail-expansion {
   padding: 1rem 1.25rem 1.25rem;

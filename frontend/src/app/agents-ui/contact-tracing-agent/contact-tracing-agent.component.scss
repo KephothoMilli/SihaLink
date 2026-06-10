@@ -409,8 +409,14 @@
   animation: expand-inline 0.2s ease-out;
 }
 @keyframes expand-inline {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 // Analytics summary row
@@ -426,7 +432,9 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  .material-symbols-outlined { font-size: 1.6rem; }
+  .material-symbols-outlined {
+    font-size: 1.6rem;
+  }
 }
 .inline-stat-val {
   font-size: 1.25rem;
@@ -501,7 +509,9 @@
   padding: 0.35rem 0.4rem;
   border-radius: 6px;
   background: var(--mat-sys-surface);
-  &:hover { background: var(--mat-sys-surface-container-low); }
+  &:hover {
+    background: var(--mat-sys-surface-container-low);
+  }
 }
 .contact-overdue {
   background: #fff3e0 !important;
@@ -527,6 +537,267 @@
   }
   .inline-contact-row {
     grid-template-columns: 90px 1fr 80px;
-    .mono, &>span:nth-child(5) { display: none; }
+    .mono,
+    & > span:nth-child(5) {
+      display: none;
+    }
   }
+}
+
+// ── Material Table — Active Traces ────────────────────────────────────────────
+.table-container {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--mat-sys-outline-variant);
+}
+
+.traces-table {
+  width: 100%;
+}
+.load-bar {
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+}
+
+.mat-column-trace_id {
+  width: 150px;
+}
+.mat-column-syndrome {
+  width: 170px;
+}
+.mat-column-progress {
+  width: 200px;
+  min-width: 160px;
+}
+.mat-column-contacts {
+  width: 100px;
+}
+.mat-column-escalation {
+  width: 100px;
+}
+.mat-column-actions {
+  width: 80px;
+  padding: 0 4px !important;
+}
+
+th.mat-header-cell {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mat-sys-on-surface-variant);
+  background: var(--mat-sys-surface-container-low) !important;
+  padding: 0 12px !important;
+}
+td.mat-cell {
+  font-size: 0.85rem;
+  padding: 0 12px !important;
+  border-bottom-color: var(--mat-sys-outline-variant) !important;
+}
+
+.trace-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.trace-row:hover {
+  background: var(--mat-sys-surface-container-lowest);
+}
+.trace-expanded {
+  background: var(--mat-sys-primary-container) !important;
+}
+
+.trace-id-cell {
+  font-family: monospace;
+  font-size: 0.8rem;
+  background: var(--mat-sys-surface-container);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+
+.progress-cell {
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+.mini-progress-label {
+  font-size: 0.75rem;
+  margin-bottom: 3px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.contacts-summary {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  .cs-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 0.82rem;
+    font-weight: 700;
+  }
+}
+
+.row-actions {
+  display: flex;
+  gap: 0;
+}
+
+// ── Expanded detail row ───────────────────────────────────────────────────────
+.detail-row td {
+  padding: 0 !important;
+  border-bottom: none !important;
+}
+.expanded-detail {
+  padding: 1rem 1.25rem 1.25rem;
+  background: var(--mat-sys-surface-container-lowest);
+  border-top: 1px dashed var(--mat-sys-outline-variant);
+  border-bottom: 2px solid var(--mat-sys-primary);
+  animation: expand-in 0.2s ease-out;
+}
+@keyframes expand-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
+  .ds {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .material-symbols-outlined {
+    font-size: 1.4rem;
+  }
+  .ds-val {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--mat-sys-on-surface);
+  }
+  .ds-lbl {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mat-sys-on-surface-variant);
+  }
+}
+
+.mini-histogram {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.mh-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 30px;
+  align-items: center;
+  gap: 0.4rem;
+}
+.mh-lbl {
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  color: var(--mat-sys-on-surface-variant);
+}
+.mh-track {
+  background: var(--mat-sys-surface-container);
+  border-radius: 3px;
+  height: 9px;
+  overflow: hidden;
+}
+.mh-fill {
+  height: 100%;
+  border-radius: 3px;
+  min-width: 3px;
+  transition: width 0.4s;
+}
+.mh-val {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.contacts-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+.cp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.2rem;
+}
+.cp-row {
+  display: grid;
+  grid-template-columns: 90px 120px 1fr 90px 70px;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.4rem;
+  background: var(--mat-sys-surface);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  &:hover {
+    background: var(--mat-sys-surface-container-low);
+  }
+}
+.cp-overdue {
+  background: #fff3e0 !important;
+}
+
+.inline-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.ih-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+// ── Contacts Material Table (Trace Detail) ─────────────────────────────────────
+.contacts-mat-table {
+  width: 100%;
+}
+.mat-column-contact_id {
+  width: 140px;
+}
+.mat-column-risk_tier {
+  width: 110px;
+}
+.mat-column-due_date {
+  width: 80px;
+}
+.mat-column-action {
+  width: 48px;
+  padding: 0 4px !important;
+}
+.overdue-cell {
+  color: #d32f2f !important;
+  font-weight: 700;
+}
+.ct-row-overdue {
+  background: #fff3e0 !important;
+}
+.mono-sm {
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+mat-paginator {
+  border-top: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface-container-low) !important;
 }

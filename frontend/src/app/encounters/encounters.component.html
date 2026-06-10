@@ -35,20 +35,20 @@
   <div class="filter-bar">
     <mat-form-field appearance="outline" class="filter-field">
       <mat-label>County</mat-label>
-      <input matInput [(ngModel)]="filterCounty" placeholder="e.g. Kisumu" (keyup.enter)="applyFilters()" />
+      <input matInput [(ngModel)]="filterCounty" (keyup.enter)="applyFilters()" autocomplete="off" />
       <span class="material-symbols-outlined" matSuffix>location_on</span>
     </mat-form-field>
 
     <mat-form-field appearance="outline" class="filter-field">
       <mat-label>Syndrome</mat-label>
-      <input matInput [(ngModel)]="filterSyndrome" placeholder="e.g. cholera" (keyup.enter)="applyFilters()" />
+      <input matInput [(ngModel)]="filterSyndrome" (keyup.enter)="applyFilters()" autocomplete="off" />
       <span class="material-symbols-outlined" matSuffix>biotech</span>
     </mat-form-field>
 
     <mat-form-field appearance="outline" class="filter-field narrow">
       <mat-label>Triage</mat-label>
-      <mat-select [(ngModel)]="filterTriage">
-        <mat-option value="">All</mat-option>
+      <mat-select [(ngModel)]="filterTriage" (selectionChange)="applyFilters()">
+        <mat-option value="">All Triage</mat-option>
         <mat-option value="RED">🔴 RED</mat-option>
         <mat-option value="YELLOW">🟡 YELLOW</mat-option>
         <mat-option value="GREEN">🟢 GREEN</mat-option>
@@ -77,7 +77,7 @@
 
   <!-- Table -->
   <div class="table-container mat-elevation-z1">
-    <table mat-table [dataSource]="dataSource" matSort class="enc-table">
+    <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="enc-table">
 
       <!-- Triage column -->
       <ng-container matColumnDef="triage">
@@ -153,129 +153,132 @@
 
       <!-- ── Expandable detail row ────────────────────────────── -->
       <ng-container matColumnDef="expandedDetail">
-        <td mat-cell *matCellDef="let row" [attr.colspan]="displayedColumns.length">
-          @if (isExpanded(row)) {
-          <div class="detail-expansion" [@detailExpand]>
+        <td mat-cell *matCellDef="let row" [attr.colspan]="displayedColumns.length" class="detail-cell"
+          [class.detail-cell--open]="isExpanded(row)">
+          <div class="detail-expansion-wrapper" [style.display]="isExpanded(row) ? 'block' : 'none'">
+            <div class="detail-expansion">
 
-            @if (detailLoading) {
-            <mat-progress-bar mode="indeterminate" style="border-radius:4px"></mat-progress-bar>
-            }
-
-            @if (!detailLoading && detailEncounter) {
-            <div class="detail-grid">
-
-              <!-- Clinical -->
-              <div class="detail-section">
-                <p class="section-title">🩺 Clinical</p>
-                <dl class="detail-list">
-                  <dt>Syndrome</dt>
-                  <dd class="capitalize">{{ formatSyndrome(detailEncounter.extracted?.syndrome) }}</dd>
-                  <dt>Triage</dt>
-                  <dd><span class="triage-pill" [style.background]="triageBg(detailEncounter.extracted?.triage_color)"
-                      [style.color]="triageColor(detailEncounter.extracted?.triage_color)">{{
-                      detailEncounter.extracted?.triage_color || '—' }}</span></dd>
-                  <dt>Language</dt>
-                  <dd>{{ detailEncounter.extracted?.detected_language || detailEncounter.extracted?.language || '—' }}
-                  </dd>
-                  <dt>Confidence</dt>
-                  <dd>{{ detailEncounter.extracted?.confidence ?
-                    (detailEncounter.extracted.confidence*100).toFixed(0)+'%' : '—' }}</dd>
-                </dl>
-                @if (detailEncounter.extracted?.symptoms?.length) {
-                <div class="detail-chips">
-                  @for (s of detailEncounter.extracted.symptoms; track s) {
-                  <span class="detail-chip">{{ s }}</span>
-                  }
-                </div>
-                }
-                @if (detailEncounter.extracted?.danger_signs?.length) {
-                <div class="detail-chips">
-                  @for (d of detailEncounter.extracted.danger_signs; track d) {
-                  <span class="detail-chip danger">⚠️ {{ d }}</span>
-                  }
-                </div>
-                }
-              </div>
-
-              <!-- Vitals -->
-              <div class="detail-section">
-                <p class="section-title">💗 Vitals</p>
-                <dl class="detail-list">
-                  <dt>Age</dt>
-                  <dd>{{ detailEncounter.extracted?.age?.value }} {{ detailEncounter.extracted?.age?.unit || '' }}</dd>
-                  <dt>Sex</dt>
-                  <dd>{{ detailEncounter.extracted?.sex || '—' }}</dd>
-                  @if (detailEncounter.extracted?.vitals?.temperature) {
-                  <dt>Temp</dt>
-                  <dd>{{ detailEncounter.extracted.vitals.temperature }}°C</dd>
-                  }
-                  @if (detailEncounter.extracted?.vitals?.blood_pressure) {
-                  <dt>BP</dt>
-                  <dd>{{ detailEncounter.extracted.vitals.blood_pressure }}</dd>
-                  }
-                  @if (detailEncounter.extracted?.vitals?.pulse) {
-                  <dt>Pulse</dt>
-                  <dd>{{ detailEncounter.extracted.vitals.pulse }} bpm</dd>
-                  }
-                  @if (detailEncounter.extracted?.vitals?.spo2) {
-                  <dt>SpO₂</dt>
-                  <dd>{{ detailEncounter.extracted.vitals.spo2 }}%</dd>
-                  }
-                  @if (detailEncounter.extracted?.vitals?.respiratory_rate) {
-                  <dt>RR</dt>
-                  <dd>{{ detailEncounter.extracted.vitals.respiratory_rate }}/min</dd>
-                  }
-                </dl>
-              </div>
-
-              <!-- Location -->
-              <div class="detail-section">
-                <p class="section-title">📍 Location</p>
-                <dl class="detail-list">
-                  <dt>County</dt>
-                  <dd>{{ detailEncounter.admin_hierarchy?.county || '—' }}</dd>
-                  <dt>Sub-County</dt>
-                  <dd>{{ detailEncounter.admin_hierarchy?.sub_county || '—' }}</dd>
-                  <dt>Ward</dt>
-                  <dd>{{ detailEncounter.admin_hierarchy?.ward || '—' }}</dd>
-                  <dt>Village</dt>
-                  <dd>{{ detailEncounter.admin_hierarchy?.village || '—' }}</dd>
-                  <dt>CHW</dt>
-                  <dd class="mono-small">{{ detailEncounter.chw_id }}</dd>
-                </dl>
-              </div>
-
-              <!-- Facilities -->
-              @if (detailEncounter.nearest_facilities?.length) {
-              <div class="detail-section">
-                <p class="section-title">🏥 Nearest Facilities</p>
-                @for (f of detailEncounter.nearest_facilities; track f.name; let i = $index) {
-                <div class="facility-item" [class.top]="i===0">
-                  <span class="f-rank">{{ i+1 }}</span>
-                  <div class="f-info">
-                    <span class="f-name">{{ f.name }}</span>
-                    <span class="f-type">{{ f.type || f.facility_type || '' }}</span>
-                  </div>
-                  <div class="f-meta">
-                    @if (f.distance_km) { <span>📍 {{ f.distance_km?.toFixed(1) }} km</span> }
-                    @if (f.eta_minutes) { <span>🕒 {{ facilityEta(f.eta_minutes) }}</span> }
-                  </div>
-                </div>
-                }
-              </div>
+              @if (isExpanded(row) && detailLoading) {
+              <mat-progress-bar mode="indeterminate" style="border-radius:4px"></mat-progress-bar>
               }
 
+              @if (isExpanded(row) && !detailLoading && detailEncounter) {
+              <div class="detail-grid">
+
+                <!-- Clinical -->
+                <div class="detail-section">
+                  <p class="section-title">🩺 Clinical</p>
+                  <dl class="detail-list">
+                    <dt>Syndrome</dt>
+                    <dd class="capitalize">{{ formatSyndrome(detailEncounter.extracted?.syndrome) }}</dd>
+                    <dt>Triage</dt>
+                    <dd><span class="triage-pill" [style.background]="triageBg(detailEncounter.extracted?.triage_color)"
+                        [style.color]="triageColor(detailEncounter.extracted?.triage_color)">{{
+                        detailEncounter.extracted?.triage_color || '—' }}</span></dd>
+                    <dt>Language</dt>
+                    <dd>{{ detailEncounter.extracted?.detected_language || detailEncounter.extracted?.language || '—' }}
+                    </dd>
+                    <dt>Confidence</dt>
+                    <dd>{{ detailEncounter.extracted?.confidence ?
+                      (detailEncounter.extracted.confidence*100).toFixed(0)+'%' : '—' }}</dd>
+                  </dl>
+                  @if (detailEncounter.extracted?.symptoms?.length) {
+                  <div class="detail-chips">
+                    @for (s of detailEncounter.extracted.symptoms; track s) {
+                    <span class="detail-chip">{{ s }}</span>
+                    }
+                  </div>
+                  }
+                  @if (detailEncounter.extracted?.danger_signs?.length) {
+                  <div class="detail-chips">
+                    @for (d of detailEncounter.extracted.danger_signs; track d) {
+                    <span class="detail-chip danger">⚠️ {{ d }}</span>
+                    }
+                  </div>
+                  }
+                </div>
+
+                <!-- Vitals -->
+                <div class="detail-section">
+                  <p class="section-title">💗 Vitals</p>
+                  <dl class="detail-list">
+                    <dt>Age</dt>
+                    <dd>{{ detailEncounter.extracted?.age?.value }} {{ detailEncounter.extracted?.age?.unit || '' }}
+                    </dd>
+                    <dt>Sex</dt>
+                    <dd>{{ detailEncounter.extracted?.sex || '—' }}</dd>
+                    @if (getVitals(detailEncounter)?.temperature || getVitals(detailEncounter)?.temperature_c) {
+                    <dt>Temp</dt>
+                    <dd>{{ getVitals(detailEncounter).temperature ?? getVitals(detailEncounter).temperature_c }}°C</dd>
+                    }
+                    @if (getVitals(detailEncounter)?.blood_pressure) {
+                    <dt>BP</dt>
+                    <dd>{{ getVitals(detailEncounter).blood_pressure }}</dd>
+                    }
+                    @if (getVitals(detailEncounter)?.pulse || getVitals(detailEncounter)?.heart_rate) {
+                    <dt>Pulse</dt>
+                    <dd>{{ getVitals(detailEncounter).pulse ?? getVitals(detailEncounter).heart_rate }} bpm</dd>
+                    }
+                    @if (getVitals(detailEncounter)?.spo2) {
+                    <dt>SpO₂</dt>
+                    <dd>{{ getVitals(detailEncounter).spo2 }}%</dd>
+                    }
+                    @if (getVitals(detailEncounter)?.respiratory_rate) {
+                    <dt>RR</dt>
+                    <dd>{{ getVitals(detailEncounter).respiratory_rate }}/min</dd>
+                    }
+                  </dl>
+                </div>
+
+                <!-- Location -->
+                <div class="detail-section">
+                  <p class="section-title">📍 Location</p>
+                  <dl class="detail-list">
+                    <dt>County</dt>
+                    <dd>{{ detailEncounter.admin_hierarchy?.county || '—' }}</dd>
+                    <dt>Sub-County</dt>
+                    <dd>{{ detailEncounter.admin_hierarchy?.sub_county || '—' }}</dd>
+                    <dt>Ward</dt>
+                    <dd>{{ detailEncounter.admin_hierarchy?.ward || '—' }}</dd>
+                    <dt>Village</dt>
+                    <dd>{{ detailEncounter.admin_hierarchy?.village || '—' }}</dd>
+                    <dt>CHW</dt>
+                    <dd class="mono-small">{{ detailEncounter.chw_id }}</dd>
+                  </dl>
+                </div>
+
+                <!-- Facilities -->
+                @if (detailEncounter.nearest_facilities?.length) {
+                <div class="detail-section">
+                  <p class="section-title">🏥 Nearest Facilities</p>
+                  @for (f of detailEncounter.nearest_facilities; track f.name; let i = $index) {
+                  <div class="facility-item" [class.top]="i===0">
+                    <span class="f-rank">{{ i+1 }}</span>
+                    <div class="f-info">
+                      <span class="f-name">{{ f.name }}</span>
+                      <span class="f-type">{{ f.type || f.facility_type || '' }}</span>
+                    </div>
+                    <div class="f-meta">
+                      @if (f.distance_km) { <span>📍 {{ f.distance_km?.toFixed(1) }} km</span> }
+                      @if (f.eta_minutes) { <span>🕒 {{ facilityEta(f.eta_minutes) }}</span> }
+                    </div>
+                  </div>
+                  }
+                </div>
+                }
+
+              </div>
+              }
             </div>
-            }
           </div>
-          }
         </td>
       </ng-container>
 
       <tr mat-header-row *matHeaderRowDef="displayedColumns; sticky: true"></tr>
       <tr mat-row *matRowDef="let row; columns: displayedColumns" class="data-row"
         [class.expanded-row]="isExpanded(row)" (click)="toggleRow(row)"></tr>
-      <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
+      <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"
+        [class.detail-row--open]="isExpanded(row)"></tr>
 
       <!-- No data row -->
       <tr class="mat-row no-data-row" *matNoDataRow>

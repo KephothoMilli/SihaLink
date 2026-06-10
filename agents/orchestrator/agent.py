@@ -1024,6 +1024,24 @@ async def health_check():
     }
 
 
+@app.post("/health/reconnect")
+async def reconnect_mongodb():
+    """
+    Force a MongoDB reconnection attempt.
+    Useful when the backend started in degraded mode due to network timing.
+    """
+    import asyncio
+    loop = asyncio.get_running_loop()
+    was_connected = data_agent.connected
+    # _check_db triggers lazy reconnect
+    connected = await loop.run_in_executor(None, data_agent._check_db)
+    return {
+        "was_connected": was_connected,
+        "now_connected": data_agent.connected,
+        "reconnected": not was_connected and data_agent.connected,
+    }
+
+
 @app.post("/encounter/start")
 @app.post("/tool/start_encounter")
 async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundTasks):
@@ -1105,14 +1123,22 @@ async def list_encounters(
       skip     — pagination offset
     """
     if not data_agent.connected:
+        # Try lazy reconnect before giving up
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, data_agent._check_db)
+    
+    if not data_agent.connected:
         return {"encounters": [], "count": 0, "status": "degraded"}
 
     from pymongo import DESCENDING as _DESC
     query: Dict[str, Any] = {}
     if county:
-        query["admin_hierarchy.county"] = county
+        # Case-insensitive regex — "nairobi" matches "Nairobi"
+        query["admin_hierarchy.county"] = {"$regex": county, "$options": "i"}
     if syndrome:
-        query["extracted.syndrome"] = syndrome
+        # Case-insensitive regex — "cholera" matches "cholera", "Cholera", etc.
+        query["extracted.syndrome"] = {"$regex": syndrome, "$options": "i"}
     if triage:
         query["extracted.triage_color"] = triage.upper()
 
@@ -1158,6 +1184,30 @@ async def get_encounter(encounter_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── /api/encounters aliases — avoids Angular proxy path collision ─────────────
+# The Angular SPA uses /encounters as a client-side route. The proxy can't
+# distinguish SPA navigation from API calls on the same path prefix, so the
+# frontend calls /api/encounters and the proxy rewrites to /encounters on the backend.
+# These aliases make the backend also accept /api/encounters directly (for production).
+
+@app.get("/api/encounters")
+async def list_encounters_api(
+    county:  Optional[str] = None,
+    syndrome: Optional[str] = None,
+    triage:  Optional[str] = None,
+    limit:   int = 50,
+    skip:    int = 0,
+):
+    """Alias for GET /encounters — used by the Angular frontend to avoid proxy collision."""
+    return await list_encounters(county=county, syndrome=syndrome, triage=triage, limit=limit, skip=skip)
+
+
+@app.get("/api/encounters/{encounter_id}")
+async def get_encounter_api(encounter_id: str):
+    """Alias for GET /encounters/{encounter_id} — used by the Angular frontend."""
+    return await get_encounter(encounter_id=encounter_id)
+
+
 @app.get("/encounter/{session_id}/workflow")
 async def get_workflow_state_endpoint(session_id: str):
     """
@@ -1167,7 +1217,7 @@ async def get_workflow_state_endpoint(session_id: str):
     state = _workflow_state.get(session_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"Workflow {session_id} not found")
-    return state
+    return _safe_serialize(state)
 
 
 @app.get("/workflows/incomplete")
@@ -1176,10 +1226,42 @@ async def list_incomplete_workflows(older_than_minutes: int = 30):
     List workflows stuck in non-terminal states — for monitoring and recovery.
     Useful to find encounters that need manual intervention.
     """
-    return {
+    return _safe_serialize({
         "incomplete": _workflow_state.list_incomplete(older_than_minutes),
         "older_than_minutes": older_than_minutes,
-    }
+    })
+
+
+def _safe_serialize(obj: Any) -> Any:
+    """
+    Recursively convert any value into a JSON-safe Python primitive.
+    Handles: ObjectId, datetime, Enum, bytes, and arbitrary nested structures.
+    """
+    from bson import ObjectId as _ObjId
+    import datetime as _dt
+    import enum as _enum
+
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, _ObjId):
+        return str(obj)
+    if isinstance(obj, _dt.datetime):
+        return obj.isoformat()
+    if isinstance(obj, _dt.date):
+        return obj.isoformat()
+    if isinstance(obj, _enum.Enum):
+        return obj.value
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {str(k): _safe_serialize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize(i) for i in obj]
+    # Final fallback — never let an unserializable type reach FastAPI's encoder
+    try:
+        return str(obj)
+    except Exception:
+        return "<unserializable>"
 
 
 @app.get("/encounter/{session_id}/status")
@@ -1188,11 +1270,20 @@ async def get_encounter_status(session_id: str):
     session = orchestrator.sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
     state = session.get("state")
+    state_str = state.value if hasattr(state, "value") else str(state)
+
+    # Deep-serialize every value — handles ObjectId, datetime, Enum, etc.
+    safe_data = _safe_serialize(
+        {k: v for k, v in session.items() if k != "state"}
+    )
+
     return {
         "session_id": session_id,
-        "state": state.value if hasattr(state, "value") else str(state),
-        "data": {k: v for k, v in session.items() if k != "state"},
+        "state": state_str,
+        "data": safe_data,
+        "error": _safe_serialize(session.get("error")),
     }
 
 
@@ -1841,16 +1932,22 @@ async def api_vector_search_protocols(payload: Dict[str, Any]):
 
 @app.post("/tool/search_encounters")
 async def api_search_encounters(payload: Dict[str, Any]):
-    """Atlas Search full-text search across encounter records."""
+    """Full-text search across encounter records. Falls back to regex if Atlas Search unavailable."""
     query = payload.get("query", "")
     if not query:
         raise HTTPException(status_code=400, detail="query required")
+    if not data_agent.connected:
+        import asyncio as _asyncio
+        loop = _asyncio.get_running_loop()
+        await loop.run_in_executor(None, data_agent._check_db)
+    if not data_agent.connected:
+        return {"results": [], "count": 0, "status": "degraded"}
     results = data_agent.search_encounters(
         query=query,
         county=payload.get("county"),
         limit=payload.get("limit", 20),
     )
-    return {"results": results, "count": len(results)}
+    return _safe_serialize({"results": results, "count": len(results)})
 
 
 @app.post("/tool/search_alerts")
@@ -1968,7 +2065,7 @@ async def swarm_trigger_offline_sync():
 @app.get("/swarm/events")
 async def swarm_events(topic: Optional[str] = None, limit: int = 50):
     """Return recent swarm events for the dashboard event log (snapshot)."""
-    return {"events": swarm.bus.recent(topic=topic, limit=limit)}
+    return _safe_serialize({"events": swarm.bus.recent(topic=topic, limit=limit)})
 
 
 # ── SSE broadcast manager ─────────────────────────────────────────────────────

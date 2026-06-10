@@ -56,8 +56,34 @@ Write-Host "   📍 Available at: http://localhost:8000" -ForegroundColor Cyan
 Write-Host "   📍 API Docs: http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host ""
 
-# Give backend a moment to start
-Start-Sleep -Seconds 2
+# Wait for backend to be ready (poll /health instead of fixed sleep)
+Write-Host "⏳ Waiting for backend to be ready..." -ForegroundColor Yellow
+$maxWait   = 60  # seconds
+$elapsed   = 0
+$backendUp = $false
+
+while ($elapsed -lt $maxWait) {
+    Start-Sleep -Seconds 2
+    $elapsed += 2
+    try {
+        $resp = Invoke-WebRequest -Uri "http://localhost:8000/health" `
+            -TimeoutSec 2 -ErrorAction SilentlyContinue
+        if ($resp.StatusCode -eq 200) {
+            $backendUp = $true
+            break
+        }
+    }
+    catch { <# still starting #> }
+    Write-Host "   ⏳ Backend not ready yet ($elapsed/$maxWait s)…" -ForegroundColor Gray
+}
+
+if ($backendUp) {
+    Write-Host "✅ Backend is ready at http://localhost:8000" -ForegroundColor Green
+}
+else {
+    Write-Host "⚠️  Backend did not respond after ${maxWait}s — starting frontend anyway" -ForegroundColor Yellow
+}
+Write-Host ""
 
 # Navigate to frontend directory
 $frontendDir = Join-Path $scriptDir "frontend"

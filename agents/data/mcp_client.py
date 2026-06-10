@@ -228,6 +228,13 @@ class DataAgent:
 
     async def insert_encounter(self, encounter_doc: Dict[str, Any]) -> str:
         """Insert a geo-enriched encounter with vector embedding."""
+        # Ensure DB is connected (handles lazy reconnect for async context)
+        if not self.connected or self.db is None:
+            loop = asyncio.get_running_loop()
+            connected = await loop.run_in_executor(None, self._check_db)
+            if not connected:
+                raise RuntimeError("MongoDB not connected — encounter not stored")
+        
         encounter_doc["timestamp"] = datetime.utcnow()
         encounter_doc["synced"] = True
         try:
@@ -313,8 +320,35 @@ class DataAgent:
         return an empty/default result immediately when it returns False.
         This prevents AttributeError: 'NoneType' has no attribute '...' when
         MongoDB is unreachable (e.g., IP not on Atlas allowlist).
+        
+        Also attempts a lazy reconnect if the initial startup ping failed —
+        this handles the race condition where Atlas IP allowlist is valid but
+        the network wasn't ready at process startup.
         """
         if not self.connected or self.db is None:
+            # Try lazy reconnect (handles startup timing issues)
+            uri = os.getenv("MONGODB_ATLAS_URI")
+            if uri:
+                try:
+                    logger.info("⚡ Attempting lazy MongoDB reconnect...")
+                    self.client = MongoClient(uri, appname="sihalink")
+                    self.client.admin.command("ping")
+                    self.db = self.client.sihalink
+                    self.embedding_svc = EmbeddingService()
+                    self.connected = True
+                    logger.info("✅ MongoDB lazy reconnect successful")
+                    try:
+                        self.ensure_indexes()
+                    except Exception:
+                        pass
+                    return True
+                except Exception as reconnect_exc:
+                    logger.warning(
+                        "⚠️  MongoDB lazy reconnect failed: %s — still in degraded mode. "
+                        "Add your IP to Atlas Network Access to restore connectivity.",
+                        reconnect_exc,
+                    )
+                    return False
             logger.warning(
                 "⚠️  MongoDB not connected — operation skipped (degraded mode). "
                 "Add your IP to Atlas Network Access to restore connectivity."
@@ -1162,10 +1196,12 @@ class DataAgent:
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         """
-        Full-text Atlas Search across encounter records.
-        Searches chief_complaint, syndrome, symptoms, and location fields.
-        Falls back to regex if Atlas Search index unavailable.
+        Full-text search across encounter records.
+        Tries Atlas Search index first; falls back to broad regex search
+        across all relevant clinical fields.
         """
+        if not self._check_db():
+            return []
         try:
             search_stage: Dict[str, Any] = {
                 "$search": {
@@ -1178,6 +1214,9 @@ class DataAgent:
                                     "extracted.chief_complaint",
                                     "extracted.syndrome",
                                     "extracted.primary_symptoms",
+                                    "extracted.symptoms",
+                                    "extracted.danger_signs",
+                                    "patient_details",
                                 ],
                                 "fuzzy": {"maxEdits": 1},
                             }
@@ -1195,21 +1234,45 @@ class DataAgent:
                 {"$limit": limit},
                 {"$project": {"_id": 0, "embedding": 0}},
             ]
-            return list(self.db.encounters.aggregate(pipeline))
+            results = list(self.db.encounters.aggregate(pipeline))
+            if results:
+                return results
+            # Atlas Search returned 0 — fall through to regex search
+            raise ValueError("Atlas Search returned 0 results — trying regex fallback")
         except Exception:
+            # Broad regex fallback — searches all clinical text fields
             import re
-            pattern = re.compile(query, re.IGNORECASE)
+            try:
+                pattern = re.compile(re.escape(query), re.IGNORECASE)
+            except re.error:
+                pattern = re.compile(query, re.IGNORECASE)
+
             q: Dict[str, Any] = {
                 "$or": [
                     {"extracted.chief_complaint": pattern},
                     {"extracted.syndrome": pattern},
+                    {"extracted.primary_symptoms": pattern},
+                    {"extracted.symptoms": pattern},
+                    {"extracted.danger_signs": pattern},
+                    {"patient_details": pattern},
+                    # Also match keywords inside nested objects / arrays
+                    {"extracted.symptoms": {"$elemMatch": {"$regex": query, "$options": "i"}}},
+                    {"extracted.primary_symptoms": {"$elemMatch": {"$regex": query, "$options": "i"}}},
+                    {"extracted.danger_signs": {"$elemMatch": {"$regex": query, "$options": "i"}}},
                 ]
             }
             if county:
-                q["admin_hierarchy.county"] = county
-            return list(
-                self.db.encounters.find(q, {"_id": 0, "embedding": 0}).limit(limit)
+                q["admin_hierarchy.county"] = {"$regex": county, "$options": "i"}
+            docs = list(
+                self.db.encounters.find(q, {"_id": 0, "embedding": 0})
+                .sort("timestamp", DESCENDING)
+                .limit(limit)
             )
+            # Convert datetimes
+            for doc in docs:
+                if hasattr(doc.get("timestamp"), "isoformat"):
+                    doc["timestamp"] = doc["timestamp"].isoformat()
+            return docs
 
     def search_alerts(
         self,

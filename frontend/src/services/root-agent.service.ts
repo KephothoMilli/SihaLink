@@ -163,21 +163,30 @@ export class RootAgentService {
         const status: any = await this.api.get(
           `/encounter/${encodeURIComponent(sessionId)}/status`,
         );
-        // Merge backend state into the local session
-        session.state = status.state ?? session.state;
-        const d = status.data ?? {};
-        if (d.extracted) session.data.extraction = d.extracted;
-        if (d.enriched) session.data.geoEnriched = d.enriched;
-        if (d.encounter_id) session.data.mongoStored = { id: d.encounter_id };
-        if (d.gate_data) session.data.gate_data = d.gate_data;
-        if (status.error) session.error = status.error;
+
+        // Normalise state string — backend returns e.g. "COMPLETE"
+        const backendState = ((status.state as string) ?? '')
+          .toUpperCase()
+          .trim();
+        if (backendState) session.state = backendState as any;
+
+        // Map backend session dict keys → frontend session.data
+        // State machine stores: "extracted", "encounter_id", "gate_data"
+        const d: Record<string, any> = status.data ?? {};
+        if (d['extracted']) session.data.extraction = d['extracted'];
+        if (d['enriched']) session.data.geoEnriched = d['enriched'];
+        if (d['encounter_id'])
+          session.data.mongoStored = { id: d['encounter_id'] };
+        if (d['gate_data']) session.data.gate_data = d['gate_data'];
+        if (status['error']) session.error = status['error'];
 
         this.activeSessions.set(sessionId, session);
         this.sessionUpdates.next({ ...session });
 
-        if (TERMINAL.has(session.state)) break;
-      } catch {
-        // Transient poll failure — keep trying
+        if (TERMINAL.has(backendState)) break;
+      } catch (pollErr) {
+        // Log so errors are visible in the browser console
+        console.warn('[RootAgent] Status poll error:', pollErr);
       }
     }
 

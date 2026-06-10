@@ -13,8 +13,23 @@ class GeoAgent:
         """
         lat, lng = coords.get("lat"), coords.get("lng")
         
-        if not lat or not lng:
+        # Only skip geo enrichment if both are truly missing (None), not just 0.0
+        # 0,0 = no GPS device — fall back to county-level enrichment from form data
+        has_gps = lat is not None and lng is not None and not (lat == 0.0 and lng == 0.0)
+        
+        if not has_gps:
+            # Try to derive admin hierarchy from the county field in extracted data
+            extracted = encounter_json.get("extracted", {})
+            county = extracted.get("county") or encounter_json.get("county", "")
+            if county:
+                encounter_json["admin_hierarchy"] = {
+                    "village":    "Unknown",
+                    "ward":       "Unknown",
+                    "sub_county": "Unknown",
+                    "county":     county,
+                }
             encounter_json["location_confidence"] = "low"
+            encounter_json["nearest_facilities"] = []
             return encounter_json
 
         # 1. Get Administrative Hierarchy (Reverse Geocode)

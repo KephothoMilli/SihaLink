@@ -46,12 +46,28 @@ export interface ExtractionResult {
     heart_rate?: number;
     respiratory_rate?: number;
   };
-  clinical_assessment: string;
+  clinical_assessment?: string;
   recommended_actions: string[];
   clarification_questions: string[];
   confidence_score: number;
   // extra fields the backend may return
   [key: string]: any;
+}
+
+/** Ensure all required array fields are present, falling back to empty arrays */
+function normalizeExtraction(raw: any): ExtractionResult {
+  return {
+    ...raw,
+    symptoms: Array.isArray(raw?.symptoms) ? raw.symptoms : [],
+    recommended_actions: Array.isArray(raw?.recommended_actions)
+      ? raw.recommended_actions
+      : [],
+    clarification_questions: Array.isArray(raw?.clarification_questions)
+      ? raw.clarification_questions
+      : [],
+    vitals: raw?.vitals ?? raw?.vital_signs ?? {},
+    confidence_score: raw?.confidence_score ?? raw?.confidence ?? 0,
+  };
 }
 
 @Injectable({ providedIn: 'root' })
@@ -63,37 +79,27 @@ export class IntakeAgentService {
     request: ExtractionRequest,
   ): Promise<ExtractionResult> {
     const res: any = await this.api.extractClinicalData(request);
-    // Backend wraps in { session_id, extracted } — unwrap if needed
-    return res?.extracted ?? res;
+    return normalizeExtraction(res?.extracted ?? res);
   }
 
-  /**
-   * Submit a structured web form to the intake pipeline.
-   * Calls POST /intake/form on the orchestrator.
-   */
   async submitForm(request: FormIntakeRequest): Promise<ExtractionResult> {
     const res: any = await this.api.intakeForm(request);
-    return res?.extracted ?? res;
+    return normalizeExtraction(res?.extracted ?? res);
   }
 
-  /**
-   * Relay a CHV Telegram message through the intake pipeline.
-   * Calls POST /intake/telegram on the orchestrator.
-   */
   async relayTelegramMessage(
     request: TelegramIntakeRequest,
   ): Promise<ExtractionResult> {
     const res: any = await this.api.intakeTelegram(request);
-    return res?.extracted ?? res;
+    return normalizeExtraction(res?.extracted ?? res);
   }
 
-  /** Refine a previous extraction with a CHV clarification answer. */
   async clarifyExtraction(request: {
     original_extraction: ExtractionResult;
     clarification_answer: string;
   }): Promise<ExtractionResult> {
     const res: any = await this.api.clarifyExtraction(request);
-    return res?.extracted ?? res;
+    return normalizeExtraction(res?.extracted ?? res);
   }
 
   /** Confirm or decline an encounter at the human-in-the-loop gate. */

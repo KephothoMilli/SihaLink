@@ -66,6 +66,73 @@ export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild(MatPaginator) paginator!: MatPaginator;
   @ViewChild(MatSort) sort!: MatSort;
 
+  // ── Filter dropdowns ──────────────────────────────────────────
+  readonly KENYA_COUNTIES = [
+    'Baringo',
+    'Bomet',
+    'Bungoma',
+    'Busia',
+    'Elgeyo Marakwet',
+    'Embu',
+    'Garissa',
+    'Homa Bay',
+    'Isiolo',
+    'Kajiado',
+    'Kakamega',
+    'Kericho',
+    'Kiambu',
+    'Kilifi',
+    'Kirinyaga',
+    'Kisii',
+    'Kisumu',
+    'Kitui',
+    'Kwale',
+    'Laikipia',
+    'Lamu',
+    'Machakos',
+    'Makueni',
+    'Mandera',
+    'Marsabit',
+    'Meru',
+    'Migori',
+    'Mombasa',
+    "Murang'a",
+    'Nairobi',
+    'Nakuru',
+    'Nandi',
+    'Narok',
+    'Nyamira',
+    'Nyandarua',
+    'Nyeri',
+    'Samburu',
+    'Siaya',
+    'Taita Taveta',
+    'Tana River',
+    'Tharaka Nithi',
+    'Trans Nzoia',
+    'Turkana',
+    'Uasin Gishu',
+    'Vihiga',
+    'Wajir',
+    'West Pokot',
+  ];
+  readonly WHO_SYNDROMES = [
+    'acute_watery_diarrhea',
+    'acute_bloody_diarrhea',
+    'acute_febrile_illness',
+    'acute_respiratory_infection',
+    'acute_rash_with_fever',
+    'malnutrition_severe',
+    'neonatal_tetanus',
+    'meningitis',
+    'viral_hemorrhagic_fever',
+    'cholera',
+    'measles',
+    'pneumonia',
+    'typhoid',
+    'unknown',
+  ];
+
   // ── Table ─────────────────────────────────────────────────────
   dataSource = new MatTableDataSource<any>([]);
   displayedColumns = [
@@ -157,7 +224,7 @@ export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
       params.push(`skip=${this.pageIndex * this.pageSize}`);
 
       const qs = params.length ? '?' + params.join('&') : '';
-      const res: any = await this.api.get(`/encounters${qs}`);
+      const res: any = await this.api.get(`/api/encounters${qs}`);
       this.dataSource.data = res.encounters ?? [];
       this.totalRecords = res.count ?? 0;
     } catch (err) {
@@ -180,6 +247,9 @@ export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
   applyFilters() {
     this.pageIndex = 0;
     this.expandedRow = null;
+    if (this.paginator) {
+      this.paginator.pageIndex = 0;
+    }
     this.loadEncounters();
   }
 
@@ -187,6 +257,9 @@ export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
     this.filterCounty = this.filterSyndrome = this.filterTriage = '';
     this.pageIndex = 0;
     this.expandedRow = null;
+    if (this.paginator) {
+      this.paginator.pageIndex = 0;
+    }
     this.loadEncounters();
   }
 
@@ -203,7 +276,7 @@ export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
     this.detailLoading = true;
     try {
       this.detailEncounter = await this.api.get(
-        `/encounters/${encodeURIComponent(row.encounter_id)}`,
+        `/api/encounters/${encodeURIComponent(row.encounter_id)}`,
       );
     } catch {
       this.detailEncounter = row;
@@ -232,6 +305,11 @@ export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
   }
   triageBg(t?: string) {
     return this.triageColor(t) + '18';
+  }
+
+  /** Returns vitals regardless of whether stored as 'vitals' or 'vital_signs' */
+  getVitals(enc: any): any {
+    return enc?.extracted?.vitals ?? enc?.extracted?.vital_signs ?? null;
   }
 
   getStateColor(s: string) {
