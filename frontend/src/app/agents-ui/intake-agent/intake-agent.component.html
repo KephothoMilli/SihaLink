@@ -1,583 +1,678 @@
-<!-- ════════════════════════════════════════════════════════════════════
-     SihaLink — Intake Agent  (Angular Material 3)
-     ════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SihaLink — Clinical Intake Portal
+     Stepper-based swarm workflow: Identity → Patient → Intake → Processing → Result
+     ═══════════════════════════════════════════════════════════════════════ -->
 
-<div class="intake-container">
+<div class="intake-shell">
 
-  <!-- Page header ─────────────────────────────────────────────────────── -->
-  <div class="page-header">
-    <span class="material-symbols-outlined header-icon">vaccines</span>
-    <div>
-      <h1 class="mat-headline-medium">Clinical Intake Portal</h1>
-      <p class="mat-body-medium subtitle">
-        Submit patient encounters via voice, form, or Telegram relay &mdash;
-        in any Kenyan language.
-      </p>
+  <!-- ── Page title ──────────────────────────────────────────────────────── -->
+  <div class="page-hero">
+    <div class="hero-text">
+      <h1>Clinical Intake Portal</h1>
+      <p>Authorized CHWs and Clinicians only. Every encounter is processed by the SihaLink swarm.</p>
     </div>
+    @if (identityVerified) {
+    <div class="operator-chip">
+      <span class="material-symbols-outlined">badge</span>
+      {{ operatorLabel }}
+      <button mat-icon-button (click)="reset()" matTooltip="Switch operator">
+        <span class="material-symbols-outlined" style="font-size:1rem">logout</span>
+      </button>
+    </div>
+    }
   </div>
 
-  <!-- Progress bar while processing ──────────────────────────────────── -->
-  @if (isProcessing) {
-  <mat-progress-bar mode="indeterminate" color="primary" class="global-progress" />
-  }
+  <!-- ── Material Stepper ────────────────────────────────────────────────── -->
+  <mat-stepper #stepper linear orientation="horizontal" class="intake-stepper">
 
-  <!-- Agent Logs (Behind the Scenes) ─────────────────────────────────── -->
-  @if (agentLogs.length > 0) {
-  <mat-card appearance="outlined" class="agent-logs-card">
-    <mat-card-header>
-      <span class="material-symbols-outlined card-icon" mat-card-avatar>memory</span>
-      <mat-card-title>Behind the Scenes: Agent Activity</mat-card-title>
-      <mat-card-subtitle>Live decision-making logs from the swarm (stored in MongoDB Vector Search)</mat-card-subtitle>
-    </mat-card-header>
-    <mat-card-content class="agent-logs-content">
-      <ul class="log-list">
-        @for (log of agentLogs; track log._id) {
-        <li class="log-item" [class]="'log-level-' + log.level.toLowerCase()">
-          <span class="log-time">{{ log.timestamp | date:'HH:mm:ss' }}</span>
-          <span class="log-agent">[{{ log.agent_name }}]</span>
-          <span class="log-step"><strong>{{ log.step }}</strong>:</span>
-          <span class="log-detail">{{ log.detail }}</span>
-        </li>
+    <!-- ════════════════════════════════════════════════════════════════════
+         STEP 0 — IDENTITY VERIFICATION
+         ════════════════════════════════════════════════════════════════════ -->
+    <mat-step [stepControl]="identityForm" [editable]="!processing" label="Identity">
+      <ng-template matStepLabel>
+        <span class="step-label">
+          <span class="material-symbols-outlined step-icon">badge</span>
+          Identity
+        </span>
+      </ng-template>
+
+      <div class="step-content">
+        <div class="step-header">
+          <span class="material-symbols-outlined step-hero-icon">verified_user</span>
+          <div>
+            <h2>Verify Your Identity</h2>
+            <p class="step-subtitle">This portal is restricted to qualified Community Health Volunteers and Clinicians.
+            </p>
+          </div>
+        </div>
+
+        <!-- Role selector -->
+        <div class="role-cards" [formGroup]="identityForm">
+          <div class="role-card" [class.selected]="role === 'chw'" (click)="setRole('chw')">
+            <span class="material-symbols-outlined role-icon">health_and_safety</span>
+            <span class="role-title">Community Health Volunteer</span>
+            <span class="role-desc">CHW / CHV — field-level patient reporting</span>
+          </div>
+          <div class="role-card" [class.selected]="role === 'clinician'" (click)="setRole('clinician')">
+            <span class="material-symbols-outlined role-icon">stethoscope</span>
+            <span class="role-title">Clinician / Officer</span>
+            <span class="role-desc">Nurse, Clinical Officer, or District Health Officer</span>
+          </div>
+        </div>
+
+        <!-- Credential fields -->
+        @if (role) {
+        <div class="credential-grid" [formGroup]="identityForm">
+
+          <mat-form-field appearance="outline">
+            <mat-label>{{ role === 'chw' ? 'CHW ID' : 'Staff ID / License No.' }}</mat-label>
+            <input matInput formControlName="chw_id"
+              [placeholder]="role === 'chw' ? 'e.g. CHW-KE-4521' : 'e.g. DOC-MOM-0089'" />
+            <span class="material-symbols-outlined" matSuffix>fingerprint</span>
+            <mat-error>ID is required</mat-error>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Full Name</mat-label>
+            <input matInput formControlName="name" placeholder="Your registered name" />
+            <span class="material-symbols-outlined" matSuffix>person</span>
+            <mat-error>Name is required</mat-error>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Operating County</mat-label>
+            <mat-select formControlName="county">
+              @for (c of counties; track c) {
+              <mat-option [value]="c">{{ c }}</mat-option>
+              }
+            </mat-select>
+            <span class="material-symbols-outlined" matSuffix>location_on</span>
+            <mat-error>County is required</mat-error>
+          </mat-form-field>
+
+        </div>
         }
-      </ul>
-    </mat-card-content>
-  </mat-card>
-  }
 
-  <!-- ── RESULTS PANEL ─────────────────────────────────────────────── -->
-  @if (extractionResult) {
-  <div class="results-section">
+        <div class="step-actions">
+          <button mat-flat-button color="primary" (click)="verifyIdentity()"
+            [disabled]="identityForm.invalid || verifying || !role">
+            @if (verifying) {
+            <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
+            } @else {
+            <span class="material-symbols-outlined btn-icon">verified</span>
+            }
+            {{ verifying ? 'Verifying…' : 'Verify & Continue' }}
+          </button>
+        </div>
+      </div>
+    </mat-step>
 
-    <!-- Triage header card -->
-    <mat-card appearance="outlined" class="triage-card"
-      [style.border-color]="triageColor(extractionResult['triage_color'])">
-      <mat-card-content>
-        <div class="triage-row">
+    <!-- ════════════════════════════════════════════════════════════════════
+         STEP 1 — PATIENT INFORMATION
+         ════════════════════════════════════════════════════════════════════ -->
+    <mat-step [stepControl]="patientForm" [editable]="!processing" label="Patient">
+      <ng-template matStepLabel>
+        <span class="step-label">
+          <span class="material-symbols-outlined step-icon">person_add</span>
+          Patient
+        </span>
+      </ng-template>
+
+      <div class="step-content" [formGroup]="patientForm">
+        <div class="step-header">
+          <span class="material-symbols-outlined step-hero-icon">person_add</span>
+          <div>
+            <h2>Patient Information</h2>
+            <p class="step-subtitle">Enter what you know. Chief complaint can be in any Kenyan language.</p>
+          </div>
+        </div>
+
+        <div class="form-grid">
+
+          <!-- Chief complaint — full width, required -->
+          <mat-form-field appearance="outline" class="span-full">
+            <mat-label>Chief Complaint *</mat-label>
+            <textarea matInput rows="3" formControlName="chief_complaint"
+              placeholder="Describe in any language — e.g. 'Mtoto ana homa kali, kuhara maji' or 'Child 3yrs, high fever, watery diarrhoea'">
+            </textarea>
+            <span class="material-symbols-outlined" matSuffix>edit_note</span>
+            <mat-hint>Swahili, Dholuo, Kikuyu, Somali, Luhya, or English</mat-hint>
+          </mat-form-field>
+
+          <!-- Symptoms chip input -->
+          <div class="span-full symptom-row">
+            <mat-form-field appearance="outline" class="symptom-field">
+              <mat-label>Add Symptom</mat-label>
+              <input matInput [(ngModel)]="symptomInput" [ngModelOptions]="{standalone:true}"
+                placeholder="e.g. fever, vomiting, rash" (keyup.enter)="addSymptom()" />
+              <button matSuffix mat-icon-button (click)="addSymptom()" [disabled]="!symptomInput.trim()">
+                <mat-icon>add_circle</mat-icon>
+              </button>
+            </mat-form-field>
+            @if (symptoms.length) {
+            <mat-chip-set class="chip-set">
+              @for (s of symptoms; track s) {
+              <mat-chip (removed)="removeSymptom(s)">
+                {{ s }}
+                <button matChipRemove><mat-icon>cancel</mat-icon></button>
+              </mat-chip>
+              }
+            </mat-chip-set>
+            }
+          </div>
+
+          <!-- Demographics -->
+          <mat-form-field appearance="outline">
+            <mat-label>Age</mat-label>
+            <input matInput type="number" formControlName="age_value" min="0" placeholder="e.g. 3" />
+            <span class="material-symbols-outlined" matSuffix>person</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Age Unit</mat-label>
+            <mat-select formControlName="age_unit">
+              <mat-option value="years">Years</mat-option>
+              <mat-option value="months">Months</mat-option>
+              <mat-option value="weeks">Weeks</mat-option>
+              <mat-option value="days">Days</mat-option>
+            </mat-select>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Sex</mat-label>
+            <mat-select formControlName="sex">
+              <mat-option value="">Not specified</mat-option>
+              <mat-option value="male">Male</mat-option>
+              <mat-option value="female">Female</mat-option>
+              <mat-option value="unknown">Unknown</mat-option>
+            </mat-select>
+            <span class="material-symbols-outlined" matSuffix>wc</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Duration (days)</mat-label>
+            <input matInput type="number" formControlName="duration_days" min="0" placeholder="e.g. 3" />
+            <span class="material-symbols-outlined" matSuffix>schedule</span>
+          </mat-form-field>
+
+          <!-- Vitals -->
+          <mat-form-field appearance="outline">
+            <mat-label>Temperature (°C)</mat-label>
+            <input matInput type="number" step="0.1" min="30" max="45" formControlName="temperature_c"
+              placeholder="e.g. 38.5" />
+            <span class="material-symbols-outlined" matSuffix>thermometer</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Respiratory Rate (/min)</mat-label>
+            <input matInput type="number" formControlName="respiratory_rate" placeholder="e.g. 28" />
+            <span class="material-symbols-outlined" matSuffix>pulmonology</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Heart Rate (bpm)</mat-label>
+            <input matInput type="number" formControlName="heart_rate" placeholder="e.g. 110" />
+            <span class="material-symbols-outlined" matSuffix>cardiology</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>County (patient location)</mat-label>
+            <mat-select formControlName="county">
+              <mat-option value="">Same as operator</mat-option>
+              @for (c of counties; track c) {
+              <mat-option [value]="c">{{ c }}</mat-option>
+              }
+            </mat-select>
+            <span class="material-symbols-outlined" matSuffix>location_on</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Suspected Syndrome</mat-label>
+            <mat-select formControlName="syndrome_hint">
+              <mat-option value="">Let AI decide</mat-option>
+              @for (s of syndromes; track s) {
+              <mat-option [value]="s">{{ formatSyndrome(s) }}</mat-option>
+              }
+            </mat-select>
+            <span class="material-symbols-outlined" matSuffix>biotech</span>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="span-full">
+            <mat-label>Patient Contacts (for contact tracing)</mat-label>
+            <textarea matInput rows="2" formControlName="patient_contacts"
+              placeholder="List household/community contacts — e.g. Brother John Doe, Neighbour Jane (next door)">
+            </textarea>
+            <span class="material-symbols-outlined" matSuffix>group</span>
+            <mat-hint>Used by the Contact Tracing Agent to build exposure networks</mat-hint>
+          </mat-form-field>
+
+        </div>
+
+        <div class="step-actions">
+          <button mat-stroked-button matStepperPrevious>Back</button>
+          <button mat-flat-button color="primary" (click)="advanceToIntake()">
+            <span class="material-symbols-outlined btn-icon">arrow_forward</span>
+            Continue to Intake
+          </button>
+        </div>
+      </div>
+    </mat-step>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         STEP 2 — CLINICAL INTAKE (Voice / Form / Telegram)
+         ════════════════════════════════════════════════════════════════════ -->
+    <mat-step [editable]="!processing" label="Intake">
+      <ng-template matStepLabel>
+        <span class="step-label">
+          <span class="material-symbols-outlined step-icon">vaccines</span>
+          Intake
+        </span>
+      </ng-template>
+
+      <div class="step-content">
+        <div class="step-header">
+          <span class="material-symbols-outlined step-hero-icon">vaccines</span>
+          <div>
+            <h2>Clinical Intake</h2>
+            <p class="step-subtitle">Choose how to submit the patient's clinical report.</p>
+          </div>
+        </div>
+
+        <!-- Mode selector -->
+        <div class="mode-tabs">
+          <button class="mode-tab" [class.active]="intakeMode==='voice'" (click)="intakeMode='voice'">
+            <span class="material-symbols-outlined">mic</span> Voice
+          </button>
+          <button class="mode-tab" [class.active]="intakeMode==='form'" (click)="intakeMode='form'">
+            <span class="material-symbols-outlined">assignment</span> Clinical Form
+          </button>
+          <button class="mode-tab" [class.active]="intakeMode==='telegram'" (click)="intakeMode='telegram'">
+            <span class="material-symbols-outlined">forum</span> Telegram Relay
+          </button>
+        </div>
+
+        <!-- ── Voice ── -->
+        @if (intakeMode === 'voice') {
+        <div class="voice-panel">
+          @if (!micAvailable) {
+          <div class="alert-banner error">
+            <span class="material-symbols-outlined">mic_off</span>
+            Microphone access denied. Enable it in your browser settings.
+          </div>
+          }
+
+          <div class="recorder-stage">
+            @if (isRecording) {
+            <div class="waveform">
+              @for (b of [1,2,3,4,5,6,7]; track b) {
+              <div class="wave-bar" [style.animation-delay]="(b*0.1)+'s'"></div>
+              }
+            </div>
+            <p class="timer-display">{{ recordingDisplay }}</p>
+            <p class="record-hint">Recording in progress…</p>
+            } @else if (audioBlob) {
+            <span class="material-symbols-outlined ready-icon">check_circle</span>
+            <p class="ready-label">Audio captured — {{ recordingDisplay }}</p>
+            } @else {
+            <span class="material-symbols-outlined idle-icon">mic</span>
+            <p class="idle-label">Tap the button below to start recording</p>
+            <p class="idle-hint">Speak in any Kenyan language</p>
+            }
+          </div>
+
+          <div class="recorder-controls">
+            @if (!isRecording && !audioBlob) {
+            <button mat-fab extended color="primary" (click)="startRecording()" [disabled]="!micAvailable">
+              <span class="material-symbols-outlined">mic</span>
+              Start Recording
+            </button>
+            }
+            @if (isRecording) {
+            <button mat-fab extended color="warn" (click)="stopRecording()" class="pulse-btn">
+              <span class="material-symbols-outlined">stop</span>
+              Stop Recording
+            </button>
+            }
+            @if (audioBlob && !isRecording) {
+            <button mat-stroked-button (click)="audioBlob=null; recordingTime=0">
+              <span class="material-symbols-outlined btn-icon">delete</span>
+              Discard
+            </button>
+            }
+          </div>
+        </div>
+        }
+
+        <!-- ── Form mode — shown as summary only (data already in step 1) ── -->
+        @if (intakeMode === 'form') {
+        <div class="form-summary">
+          <div class="alert-banner info">
+            <span class="material-symbols-outlined">check_circle</span>
+            Patient details entered in Step 1 will be submitted as the clinical form.
+            Go back to edit.
+          </div>
+          @if (patientForm.value.chief_complaint) {
+          <div class="summary-field">
+            <span class="summary-label">Chief Complaint</span>
+            <span class="summary-value">{{ patientForm.value.chief_complaint }}</span>
+          </div>
+          }
+          @if (symptoms.length) {
+          <div class="summary-field">
+            <span class="summary-label">Symptoms</span>
+            <div class="chip-set-inline">
+              @for (s of symptoms; track s) { <span class="mini-chip">{{ s }}</span> }
+            </div>
+          </div>
+          }
+        </div>
+        }
+
+        <!-- ── Telegram relay ── -->
+        @if (intakeMode === 'telegram') {
+        <div class="telegram-panel">
+          <div class="alert-banner info">
+            <span class="material-symbols-outlined">info</span>
+            <div>
+              Paste the CHV's raw Telegram message. The AI will extract clinical data automatically.<br />
+              <em>Example: "Nyithindo gi homa, ratiro, angʼo ok e mimi"</em>
+            </div>
+          </div>
+          <mat-form-field appearance="outline" class="full-field">
+            <mat-label>Telegram Message *</mat-label>
+            <textarea matInput rows="6" [(ngModel)]="telegramText"
+              placeholder="Paste CHV's full Telegram message here…"></textarea>
+            <span class="material-symbols-outlined" matSuffix>chat</span>
+            <mat-hint>Any language — auto-detected</mat-hint>
+          </mat-form-field>
+        </div>
+        }
+
+        <div class="step-actions">
+          <button mat-stroked-button matStepperPrevious [disabled]="processing">Back</button>
+          <button mat-flat-button color="primary" (click)="launchPipeline()" [disabled]="!canLaunch() || processing">
+            <span class="material-symbols-outlined btn-icon">rocket_launch</span>
+            Launch Swarm Pipeline
+          </button>
+        </div>
+      </div>
+    </mat-step>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         STEP 3 — SWARM PROCESSING (live pipeline view)
+         ════════════════════════════════════════════════════════════════════ -->
+    <mat-step [editable]="false" label="Processing">
+      <ng-template matStepLabel>
+        <span class="step-label">
+          <span class="material-symbols-outlined step-icon">hub</span>
+          Processing
+        </span>
+      </ng-template>
+
+      <div class="step-content">
+        <div class="step-header">
+          <span class="material-symbols-outlined step-hero-icon" [class.spin]="processing">hub</span>
+          <div>
+            <h2>Swarm Pipeline</h2>
+            <p class="step-subtitle">Your encounter is being processed by the autonomous agent swarm.</p>
+          </div>
+        </div>
+
+        @if (processing) {
+        <mat-progress-bar mode="indeterminate" color="primary" class="top-bar"></mat-progress-bar>
+        }
+
+        <!-- Pipeline steps -->
+        <div class="pipeline-track">
+          @for (step of pipelineLog; track step.state) {
+          <div class="pipeline-node" [class.done]="step.done"
+            [class.active]="processingState === step.state && !step.done">
+            <div class="node-dot">
+              @if (step.done) {
+              <span class="material-symbols-outlined node-icon done">check_circle</span>
+              } @else if (processingState === step.state) {
+              <mat-spinner diameter="20" class="node-spinner"></mat-spinner>
+              } @else {
+              <span class="material-symbols-outlined node-icon pending">radio_button_unchecked</span>
+              }
+            </div>
+            <div class="node-info">
+              <span class="node-label">{{ step.label }}</span>
+              @if (processingState === step.state && !step.done) {
+              <span class="node-status">Running…</span>
+              } @else if (step.done) {
+              <span class="node-status done">Complete</span>
+              }
+            </div>
+          </div>
+          }
+        </div>
+
+        @if (sessionId) {
+        <p class="session-ref">
+          <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle">tag</span>
+          Session: <code>{{ sessionId }}</code>
+        </p>
+        }
+      </div>
+    </mat-step>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         STEP 4 — RESULT & DISPATCH
+         ════════════════════════════════════════════════════════════════════ -->
+    <mat-step [editable]="false" label="Result">
+      <ng-template matStepLabel>
+        <span class="step-label">
+          <span class="material-symbols-outlined step-icon">assignment_turned_in</span>
+          Result
+        </span>
+      </ng-template>
+
+      <div class="step-content">
+
+        @if (extractionResult) {
+
+        <!-- Triage banner -->
+        <div class="triage-banner" [style.background]="triageColor(extractionResult['triage_color']) + '12'"
+          [style.border-color]="triageColor(extractionResult['triage_color'])">
           <span class="material-symbols-outlined triage-icon"
             [style.color]="triageColor(extractionResult['triage_color'])">
             {{ triageIcon(extractionResult['triage_color']) }}
           </span>
-          <div>
-            <p class="mat-label-small muted">Triage Priority</p>
-            <p class="mat-title-large triage-label" [style.color]="triageColor(extractionResult['triage_color'])">
+          <div class="triage-info">
+            <span class="triage-color" [style.color]="triageColor(extractionResult['triage_color'])">
               {{ extractionResult['triage_color'] || 'UNKNOWN' }}
-            </p>
+            </span>
+            <span class="triage-syndrome">{{ formatSyndrome(extractionResult['syndrome']) }}</span>
           </div>
-          <div class="triage-syndrome">
-            <p class="mat-label-small muted">Syndrome</p>
-            <p class="mat-title-medium">{{ formatSyndrome(extractionResult['syndrome']) }}</p>
+          <div class="triage-meta">
+            <div class="meta-item">
+              <span class="meta-label">Confidence</span>
+              <span class="meta-val">{{ ((extractionResult.confidence_score || 0) * 100).toFixed(0) }}%</span>
+            </div>
+            @if (extractionResult['detected_language']) {
+            <div class="meta-item">
+              <span class="meta-label">Language</span>
+              <span class="meta-val">{{ extractionResult['detected_language'] }}</span>
+            </div>
+            }
           </div>
-          <div class="triage-confidence">
-            <p class="mat-label-small muted">AI Confidence</p>
-            <p class="mat-title-medium">
-              {{ (extractionResult.confidence_score * 100).toFixed(0) }}%
-            </p>
-          </div>
-          @if (extractionResult['detected_language']) {
-          <div>
-            <p class="mat-label-small muted">Language Detected</p>
-            <p class="mat-body-large">{{ extractionResult['detected_language'] }}</p>
-          </div>
-          }
-          <span class="spacer"></span>
-          <button mat-icon-button matTooltip="Start new encounter" (click)="reset()">
+          <button mat-icon-button (click)="reset()" matTooltip="New encounter" style="margin-left:auto">
             <span class="material-symbols-outlined">refresh</span>
           </button>
         </div>
-      </mat-card-content>
-    </mat-card>
 
-    <!-- Results grid -->
-    <div class="results-grid">
+        <!-- Result grid -->
+        <div class="result-grid">
 
-      <!-- Left column -->
-      <div class="results-main">
-
-        <!-- Symptoms chip list -->
-        <mat-card appearance="outlined">
-          <mat-card-header>
-            <span class="material-symbols-outlined card-icon" mat-card-avatar>
-              stethoscope
-            </span>
-            <mat-card-title>Primary Symptoms</mat-card-title>
-          </mat-card-header>
-          <mat-card-content>
-            @if (extractionResult.symptoms.length) {
-            <mat-chip-set>
-              @for (s of extractionResult.symptoms; track s) {
-              <mat-chip>{{ s }}</mat-chip>
+          <!-- Symptoms -->
+          <mat-card appearance="outlined" class="result-card">
+            <mat-card-header>
+              <span class="material-symbols-outlined card-lead-icon" mat-card-avatar>stethoscope</span>
+              <mat-card-title>Symptoms</mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              @if (extractionResult.symptoms.length) {
+              <mat-chip-set>
+                @for (s of extractionResult.symptoms; track s) {
+                <mat-chip>{{ s }}</mat-chip>
+                }
+              </mat-chip-set>
+              } @else {
+              <p class="muted-text">No symptoms explicitly recorded.</p>
               }
-            </mat-chip-set>
-            } @else {
-            <p class="mat-body-medium muted">No acute symptoms explicitly recorded.</p>
-            }
-          </mat-card-content>
-        </mat-card>
+            </mat-card-content>
+          </mat-card>
 
-        <!-- Clinical assessment -->
-        @if (extractionResult.clinical_assessment) {
-        <mat-card appearance="outlined">
+          <!-- Vitals -->
+          <mat-card appearance="outlined" class="result-card">
+            <mat-card-header>
+              <span class="material-symbols-outlined card-lead-icon" mat-card-avatar>monitor_heart</span>
+              <mat-card-title>Vitals</mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <div class="vitals-row">
+                <div class="vital">
+                  <span class="vl">Age</span>
+                  <span class="vv">{{ extractionResult['age']?.value ?? '—' }} {{ extractionResult['age']?.unit ?? ''
+                    }}</span>
+                </div>
+                <div class="vital">
+                  <span class="vl">Sex</span>
+                  <span class="vv">{{ extractionResult['sex'] || '—' }}</span>
+                </div>
+                <div class="vital">
+                  <span class="vl">Temp</span>
+                  <span class="vv">{{ extractionResult.vitals.temperature ? extractionResult.vitals.temperature + '°C' :
+                    '—' }}</span>
+                </div>
+                <div class="vital">
+                  <span class="vl">Resp</span>
+                  <span class="vv">{{ extractionResult.vitals.respiratory_rate ?
+                    extractionResult.vitals.respiratory_rate + '/min' : '—' }}</span>
+                </div>
+                <div class="vital">
+                  <span class="vl">HR</span>
+                  <span class="vv">{{ extractionResult.vitals.heart_rate ? extractionResult.vitals.heart_rate + ' bpm' :
+                    '—' }}</span>
+                </div>
+                <div class="vital">
+                  <span class="vl">BP</span>
+                  <span class="vv">{{ extractionResult.vitals.blood_pressure || '—' }}</span>
+                </div>
+              </div>
+            </mat-card-content>
+          </mat-card>
+
+          <!-- Recommended actions -->
+          @if (extractionResult.recommended_actions.length) {
+          <mat-card appearance="outlined" class="result-card span-full">
+            <mat-card-header>
+              <span class="material-symbols-outlined card-lead-icon" mat-card-avatar>bolt</span>
+              <mat-card-title>Immediate Actions</mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <ol class="action-list">
+                @for (a of extractionResult.recommended_actions; track a) {
+                <li>{{ a }}</li>
+                }
+              </ol>
+            </mat-card-content>
+          </mat-card>
+          }
+
+          <!-- Clinical assessment -->
+          @if (extractionResult.clinical_assessment) {
+          <mat-card appearance="outlined" class="result-card span-full">
+            <mat-card-header>
+              <span class="material-symbols-outlined card-lead-icon" mat-card-avatar>description</span>
+              <mat-card-title>Clinical Assessment</mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <p>{{ extractionResult.clinical_assessment }}</p>
+            </mat-card-content>
+          </mat-card>
+          }
+
+        </div>
+
+        <!-- Decision gate -->
+        @if (gateSession) {
+        <mat-card appearance="outlined" class="gate-card">
           <mat-card-header>
-            <span class="material-symbols-outlined card-icon" mat-card-avatar>
-              description
-            </span>
-            <mat-card-title>Clinical Assessment</mat-card-title>
+            <span class="material-symbols-outlined card-lead-icon warn-icon"
+              mat-card-avatar>notification_important</span>
+            <mat-card-title>Referral Authorization Required</mat-card-title>
+            <mat-card-subtitle>
+              Triage is {{ extractionResult['triage_color'] }} — confirm before dispatching to facility.
+            </mat-card-subtitle>
           </mat-card-header>
           <mat-card-content>
-            <p class="mat-body-large">{{ extractionResult.clinical_assessment }}</p>
-          </mat-card-content>
-        </mat-card>
-        }
-
-        <!-- Recommended actions -->
-        @if (extractionResult.recommended_actions.length) {
-        <mat-card appearance="outlined">
-          <mat-card-header>
-            <span class="material-symbols-outlined card-icon" mat-card-avatar>
-              bolt
-            </span>
-            <mat-card-title>Recommended Protocols</mat-card-title>
-          </mat-card-header>
-          <mat-card-content>
-            <ul class="protocol-list">
-              @for (a of extractionResult.recommended_actions; track a) {
-              <li>
-                <span class="material-symbols-outlined list-bullet">chevron_right</span>
-                {{ a }}
-              </li>
-              }
-            </ul>
-          </mat-card-content>
-        </mat-card>
-        }
-      </div>
-
-      <!-- Right column -->
-      <div class="results-side">
-
-        <!-- Vitals card -->
-        <mat-card appearance="outlined">
-          <mat-card-header>
-            <span class="material-symbols-outlined card-icon" mat-card-avatar>
-              monitor_heart
-            </span>
-            <mat-card-title>Patient Vitals</mat-card-title>
-          </mat-card-header>
-          <mat-card-content>
-            <div class="vitals-grid">
-              <div class="vital-item">
-                <span class="material-symbols-outlined vital-icon">person</span>
-                <span class="mat-label-small">Age</span>
-                <span class="mat-body-large">
-                  {{ extractionResult['age']?.value ?? '—' }}
-                  {{ extractionResult['age']?.unit ?? '' }}
-                </span>
-              </div>
-              <div class="vital-item">
-                <span class="material-symbols-outlined vital-icon">wc</span>
-                <span class="mat-label-small">Sex</span>
-                <span class="mat-body-large">{{ extractionResult['sex'] || '—' }}</span>
-              </div>
-              <div class="vital-item">
-                <span class="material-symbols-outlined vital-icon">thermometer</span>
-                <span class="mat-label-small">Temperature</span>
-                <span class="mat-body-large">
-                  {{ extractionResult.vitals.temperature
-                  ? extractionResult.vitals.temperature + ' °C' : '—' }}
-                </span>
-              </div>
-              <div class="vital-item">
-                <span class="material-symbols-outlined vital-icon">pulmonology</span>
-                <span class="mat-label-small">Respiratory</span>
-                <span class="mat-body-large">
-                  {{ extractionResult.vitals.respiratory_rate
-                  ? extractionResult.vitals.respiratory_rate + ' /min' : '—' }}
-                </span>
-              </div>
-              <div class="vital-item">
-                <span class="material-symbols-outlined vital-icon">cardiology</span>
-                <span class="mat-label-small">Heart Rate</span>
-                <span class="mat-body-large">
-                  {{ extractionResult.vitals.heart_rate
-                  ? extractionResult.vitals.heart_rate + ' bpm' : '—' }}
-                </span>
-              </div>
-              <div class="vital-item">
-                <span class="material-symbols-outlined vital-icon">bloodtype</span>
-                <span class="mat-label-small">Blood Pressure</span>
-                <span class="mat-body-large">
-                  {{ extractionResult.vitals.blood_pressure || '—' }} </span>
-              </div>
+            <p class="gate-info">
+              The nearest facility will receive a Telegram notification with the patient details and ETA.
+              This action cannot be undone.
+            </p>
+            <div class="gate-actions">
+              <button mat-flat-button color="primary" (click)="confirmGate(true)">
+                <span class="material-symbols-outlined btn-icon">send</span>
+                Approve & Dispatch
+              </button>
+              <button mat-stroked-button color="warn" (click)="confirmGate(false)">
+                <span class="material-symbols-outlined btn-icon">cancel</span>
+                Decline
+              </button>
             </div>
           </mat-card-content>
         </mat-card>
+        }
 
-        <!-- Clarification card -->
+        <!-- Clarification -->
         @if (extractionResult.clarification_questions.length) {
         <mat-card appearance="outlined" class="clarification-card">
           <mat-card-header>
-            <span class="material-symbols-outlined card-icon warning-icon" mat-card-avatar>
-              help
-            </span>
+            <span class="material-symbols-outlined card-lead-icon warn-icon" mat-card-avatar>help</span>
             <mat-card-title>Clarification Needed</mat-card-title>
           </mat-card-header>
           <mat-card-content>
-            <ul class="clarification-list">
+            <ul class="clarification-questions">
               @for (q of extractionResult.clarification_questions; track q) {
               <li>{{ q }}</li>
               }
             </ul>
-            <mat-form-field appearance="outline" class="full-width mt-2">
-              <mat-label>Your response</mat-label>
-              <input matInput [(ngModel)]="clarificationText" (keyup.enter)="submitClarification()"
-                [disabled]="isProcessing" />
-              <mat-icon matSuffix>send</mat-icon>
-            </mat-form-field>
-            <button mat-flat-button color="accent" class="full-width"
-              [disabled]="isProcessing || !clarificationText.trim()" (click)="submitClarification()">
-              <span class="material-symbols-outlined btn-icon">send</span>
-              {{ isProcessing ? 'Updating…' : 'Submit Clarification' }}
-            </button>
+            <div class="clarify-row">
+              <mat-form-field appearance="outline" class="flex-field">
+                <mat-label>Your response</mat-label>
+                <input matInput [(ngModel)]="clarificationText" (keyup.enter)="submitClarification()" />
+              </mat-form-field>
+              <button mat-flat-button color="accent" (click)="submitClarification()"
+                [disabled]="clarifying || !clarificationText.trim()">
+                @if (clarifying) { <mat-spinner diameter="18" class="inline-spinner"></mat-spinner> }
+                @else { <span class="material-symbols-outlined btn-icon">send</span> }
+                Submit
+              </button>
+            </div>
           </mat-card-content>
         </mat-card>
         }
 
+        <div class="result-footer">
+          <button mat-stroked-button (click)="reset()">
+            <span class="material-symbols-outlined btn-icon">add_circle</span>
+            New Encounter
+          </button>
+        </div>
+
+        } @else {
+        <!-- Result not yet available -->
+        <div class="result-empty">
+          <span class="material-symbols-outlined empty-icon">hourglass_bottom</span>
+          <p>Pipeline in progress — results will appear here.</p>
+        </div>
+        }
+
       </div>
-    </div>
+    </mat-step>
 
-    <!-- New encounter button -->
-    <div class="result-footer">
-      <button mat-stroked-button (click)="reset()">
-        <span class="material-symbols-outlined btn-icon">refresh</span>
-        New Encounter
-      </button>
-    </div>
-  </div>
-  }
-
-  <!-- ── INTAKE TABS ─────────────────────────────────────────────────── -->
-  @if (!extractionResult) {
-  <mat-card appearance="outlined" class="intake-card">
-    <mat-tab-group mat-stretch-tabs="false" animationDuration="200ms" class="intake-tabs">
-
-      <!-- ═══ TAB 1 — VOICE RECORDING ═════════════════════════════════ -->
-      <mat-tab>
-        <ng-template mat-tab-label>
-          <span class="material-symbols-outlined tab-icon">mic</span>
-          Voice Recording
-        </ng-template>
-
-        <div class="tab-content">
-          <p class="mat-body-medium tab-subtitle">
-            Record in Dholuo, Swahili, Kikuyu, Somali, Luhya, or English &mdash;
-            including code-switching. Gemini transcribes and extracts clinical data automatically.
-          </p>
-
-          @if (!micAvailable) {
-          <mat-card appearance="outlined" class="warning-banner">
-            <mat-card-content>
-              <span class="material-symbols-outlined">mic_off</span>
-              Microphone not available. Check browser permissions.
-            </mat-card-content>
-          </mat-card>
-          }
-
-          <!-- Recorder card -->
-          <div class="recorder-card">
-
-            <!-- Waveform animation while recording -->
-            @if (isRecording) {
-            <div class="wave-container">
-              <div class="wave-bars">
-                @for (bar of [1,2,3,4,5,6,7]; track bar) {
-                <div class="wave-bar" [style.animation-delay]="(bar * 0.1) + 's'"></div>
-                }
-              </div>
-              <p class="mat-display-small timer">{{ getRecordingTimeDisplay() }}</p>
-              <p class="mat-label-medium muted">Recording…</p>
-            </div>
-            }
-
-            <!-- Idle / audio-ready state -->
-            @if (!isRecording) {
-            <div class="recorder-idle">
-              @if (!audioBlob) {
-              <span class="material-symbols-outlined mic-idle-icon">mic</span>
-              <p class="mat-body-medium muted">Tap the button to begin recording</p>
-              } @else {
-              <span class="material-symbols-outlined audio-ready-icon">check_circle</span>
-              <p class="mat-body-large audio-ready-text">Audio captured</p>
-              <p class="mat-label-small muted">{{ getRecordingTimeDisplay() }} recorded</p>
-              }
-            </div>
-            }
-
-            <!-- Controls -->
-            <div class="recorder-controls">
-              @if (!isRecording && !audioBlob) {
-              <button mat-fab color="primary" [disabled]="!micAvailable || isProcessing" (click)="startRecording()"
-                matTooltip="Start recording">
-                <span class="material-symbols-outlined">mic</span>
-              </button>
-              }
-              @if (isRecording) {
-              <button mat-fab color="warn" (click)="stopRecording()" class="pulsing-btn" matTooltip="Stop recording">
-                <span class="material-symbols-outlined">stop</span>
-              </button>
-              }
-              @if (audioBlob && !isRecording) {
-              <div class="audio-actions">
-                <button mat-flat-button color="primary" [disabled]="isProcessing" (click)="processAudio()">
-                  @if (isProcessing) {
-                  <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-                  } @else {
-                  <span class="material-symbols-outlined btn-icon">psychology</span>
-                  }
-                  {{ isProcessing ? 'Analysing…' : 'Extract Clinical Data' }}
-                </button>
-                <button mat-stroked-button [disabled]="isProcessing" (click)="audioBlob = null; recordingTime = 0">
-                  <span class="material-symbols-outlined btn-icon">delete</span>
-                  Discard
-                </button>
-              </div>
-              }
-            </div>
-          </div>
-        </div>
-      </mat-tab>
-
-      <!-- ═══ TAB 2 — WEB FORM ═════════════════════════════════════════ -->
-      <mat-tab>
-        <ng-template mat-tab-label>
-          <span class="material-symbols-outlined tab-icon">assignment</span>
-          Clinical Form
-        </ng-template>
-
-        <div class="tab-content">
-          <p class="mat-body-medium tab-subtitle">
-            Fill the structured encounter form. Chief complaint can be in any language.
-          </p>
-
-          <div class="form-grid">
-
-            <!-- Chief complaint — full width -->
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Chief Complaint</mat-label>
-              <textarea matInput rows="3" [(ngModel)]="formData.chief_complaint"
-                placeholder="Describe symptoms in any language — e.g. 'Mtoto ana homa kali, kuhara'">
-                </textarea>
-              <mat-icon matSuffix>edit_note</mat-icon>
-              <mat-hint>Supports Dholuo, Swahili, Kikuyu, Somali, Luhya, and English</mat-hint>
-            </mat-form-field>
-
-            <!-- Patient Contacts - full width -->
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Patient Contacts</mat-label>
-              <textarea matInput rows="2" [(ngModel)]="formData.patient_contacts"
-                placeholder="List household or community contacts (e.g. John Doe - Brother, Jane - Sister)">
-                </textarea>
-              <mat-icon matSuffix>group</mat-icon>
-              <mat-hint>Helps the Contact Tracing Agent build exposure networks</mat-hint>
-            </mat-form-field>
-
-            <!-- Symptoms chip input — full width -->
-            <div class="full-width symptom-field">
-              <mat-form-field appearance="outline" class="symptom-input">
-                <mat-label>Add Symptom</mat-label>
-                <input matInput [(ngModel)]="symptomInput" placeholder="e.g. fever, vomiting, diarrhoea"
-                  (keyup.enter)="addSymptom()" />
-                <button matSuffix mat-icon-button (click)="addSymptom()" matTooltip="Add symptom"
-                  [disabled]="!symptomInput.trim()">
-                  <mat-icon>add_circle</mat-icon>
-                </button>
-              </mat-form-field>
-              @if (formData.symptoms.length) {
-              <mat-chip-set class="symptom-chips">
-                @for (s of formData.symptoms; track s) {
-                <mat-chip (removed)="removeSymptom(s)">
-                  {{ s }}
-                  <button matChipRemove>
-                    <mat-icon>cancel</mat-icon>
-                  </button>
-                </mat-chip>
-                }
-              </mat-chip-set>
-              }
-            </div>
-
-            <!-- Age value -->
-            <mat-form-field appearance="outline">
-              <mat-label>Age</mat-label>
-              <input matInput type="number" [(ngModel)]="formData.age_value" min="0" placeholder="e.g. 3" />
-              <mat-icon matSuffix>person</mat-icon>
-            </mat-form-field>
-
-            <!-- Age unit -->
-            <mat-form-field appearance="outline">
-              <mat-label>Age Unit</mat-label>
-              <mat-select [(ngModel)]="formData.age_unit">
-                <mat-option value="years">Years</mat-option>
-                <mat-option value="months">Months</mat-option>
-                <mat-option value="weeks">Weeks</mat-option>
-                <mat-option value="days">Days</mat-option>
-              </mat-select>
-            </mat-form-field>
-
-            <!-- Sex -->
-            <mat-form-field appearance="outline">
-              <mat-label>Sex</mat-label>
-              <mat-select [(ngModel)]="formData.sex">
-                <mat-option value="">— Not specified —</mat-option>
-                <mat-option value="male">Male</mat-option>
-                <mat-option value="female">Female</mat-option>
-                <mat-option value="unknown">Unknown</mat-option>
-              </mat-select>
-              <mat-icon matSuffix>wc</mat-icon>
-            </mat-form-field>
-
-            <!-- Temperature -->
-            <mat-form-field appearance="outline">
-              <mat-label>Temperature (°C)</mat-label>
-              <input matInput type="number" step="0.1" min="30" max="45" [(ngModel)]="formData.temperature_c"
-                placeholder="e.g. 38.5" />
-              <mat-icon matSuffix>thermometer</mat-icon>
-            </mat-form-field>
-
-            <!-- Respiratory rate -->
-            <mat-form-field appearance="outline">
-              <mat-label>Respiratory Rate (/min)</mat-label>
-              <input matInput type="number" min="0" max="100" [(ngModel)]="formData.respiratory_rate"
-                placeholder="e.g. 28" />
-              <mat-icon matSuffix>pulmonology</mat-icon>
-            </mat-form-field>
-
-            <!-- Heart rate -->
-            <mat-form-field appearance="outline">
-              <mat-label>Heart Rate (bpm)</mat-label>
-              <input matInput type="number" min="0" max="300" [(ngModel)]="formData.heart_rate"
-                placeholder="e.g. 110" />
-              <mat-icon matSuffix>cardiology</mat-icon>
-            </mat-form-field>
-
-            <!-- Duration -->
-            <mat-form-field appearance="outline">
-              <mat-label>Duration (days)</mat-label>
-              <input matInput type="number" min="0" [(ngModel)]="formData.duration_days" placeholder="e.g. 3" />
-              <mat-icon matSuffix>schedule</mat-icon>
-            </mat-form-field>
-
-            <!-- County -->
-            <mat-form-field appearance="outline">
-              <mat-label>County</mat-label>
-              <mat-select [(ngModel)]="formData.county">
-                <mat-option value="">— Not specified —</mat-option>
-                @for (c of counties; track c) {
-                <mat-option [value]="c">{{ c }}</mat-option>
-                }
-              </mat-select>
-              <mat-icon matSuffix>location_on</mat-icon>
-            </mat-form-field>
-
-            <!-- Syndrome hint -->
-            <mat-form-field appearance="outline">
-              <mat-label>Suspected Syndrome (optional)</mat-label>
-              <mat-select [(ngModel)]="formData.syndrome_hint">
-                <mat-option value="">— Let AI decide —</mat-option>
-                @for (s of syndromes; track s) {
-                <mat-option [value]="s">{{ formatSyndrome(s) }}</mat-option>
-                }
-              </mat-select>
-              <mat-icon matSuffix>biotech</mat-icon>
-            </mat-form-field>
-
-            <!-- Language hint -->
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Language of complaint (optional)</mat-label>
-              <input matInput [(ngModel)]="formData.language_hint" placeholder="e.g. Dholuo, Swahili, Kikuyu…" />
-              <mat-icon matSuffix>translate</mat-icon>
-            </mat-form-field>
-
-          </div>
-
-          <div class="form-actions">
-            <button mat-flat-button color="primary" [disabled]="isProcessing" (click)="submitForm()">
-              @if (isProcessing) {
-              <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-              } @else {
-              <span class="material-symbols-outlined btn-icon">psychology</span>
-              }
-              {{ isProcessing ? 'Processing…' : 'Extract Clinical Data' }}
-            </button>
-          </div>
-        </div>
-      </mat-tab>
-
-      <!-- ═══ TAB 3 — TELEGRAM RELAY ══════════════════════════════════ -->
-      <mat-tab>
-        <ng-template mat-tab-label>
-          <span class="material-symbols-outlined tab-icon">forum</span>
-          Telegram Relay
-        </ng-template>
-
-        <div class="tab-content">
-          <p class="mat-body-medium tab-subtitle">
-            Paste a CHV's Telegram message to process it through the intake pipeline.
-            Language is auto-detected and translated if needed.
-          </p>
-
-          <!-- Info banner -->
-          <mat-card appearance="outlined" class="info-banner">
-            <mat-card-content>
-              <div class="info-banner-row">
-                <span class="material-symbols-outlined info-icon">info</span>
-                <span class="mat-body-small">
-                  Example CHV messages the system understands:<br>
-                  <em>"Nyithindo gi homa, ratiro — ok guoko kata madho"</em> (Dholuo)<br>
-                  <em>"Mtoto miaka 2, homa kali, kuhara maji"</em> (Swahili)
-                </span>
-              </div>
-            </mat-card-content>
-          </mat-card>
-
-          <div class="telegram-form">
-
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>CHV ID / Telegram Username (optional)</mat-label>
-              <input matInput [(ngModel)]="telegramData.chw_id" placeholder="e.g. CHW-A1B2C3 or @chwusername" />
-              <mat-icon matSuffix>badge</mat-icon>
-            </mat-form-field>
-
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Telegram Message Text *</mat-label>
-              <textarea matInput rows="6" [(ngModel)]="telegramData.message_text"
-                placeholder="Paste the CHV's full Telegram message here…">
-                </textarea>
-              <mat-icon matSuffix>chat</mat-icon>
-              <mat-hint>Any language supported — Dholuo, Swahili, Kikuyu, Somali, Luhya, English</mat-hint>
-            </mat-form-field>
-
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Language Hint (optional)</mat-label>
-              <input matInput [(ngModel)]="telegramData.language_hint" placeholder="e.g. Dholuo, Swahili, Somali…" />
-              <mat-icon matSuffix>translate</mat-icon>
-            </mat-form-field>
-
-            <div class="form-actions">
-              <button mat-flat-button color="primary" [disabled]="isProcessing" (click)="relayTelegramMessage()">
-                @if (isProcessing) {
-                <mat-spinner diameter="18" class="inline-spinner"></mat-spinner>
-                } @else {
-                <span class="material-symbols-outlined btn-icon">send</span>
-                }
-                {{ isProcessing ? 'Processing…' : 'Process Telegram Message' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </mat-tab>
-
-    </mat-tab-group>
-  </mat-card>
-  }
+  </mat-stepper>
 
 </div>

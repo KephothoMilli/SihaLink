@@ -16,9 +16,11 @@ import { DataAgentService } from './agents/data-agent.service';
 import { NotifyAgentService } from './agents/notify-agent.service';
 import { SurveillanceAgentService } from './agents/surveillance-agent.service';
 import { ContactTracingAgentService } from './agents/contact-tracing-agent.service';
+import { ApiService } from './api.service';
 
 /**
- * Represents the state of a complete encounter workflow
+ * Represents the state of a complete encounter workflow.
+ * States mirror EncounterState enum in agents/orchestrator/state_machine.py.
  */
 export interface EncounterSession {
   sessionId: string;
@@ -26,11 +28,17 @@ export interface EncounterSession {
     | 'IDLE'
     | 'LISTENING'
     | 'EXTRACTING'
+    | 'CLARIFICATION_GATE'
     | 'GEOCODING'
     | 'STORING'
+    | 'FOLLOW_UP_SCHEDULED'
+    | 'ALERTING'
     | 'DECISION_GATE'
     | 'NOTIFYING'
-    | 'COMPLETE';
+    | 'COMPLETE'
+    | 'OFFLINE_QUEUED'
+    | 'SYNCING'
+    | 'FAILED';
   data: {
     audio?: string;
     extraction?: any;
@@ -39,6 +47,7 @@ export interface EncounterSession {
     mongoStored?: any;
     notifications?: any[];
     surveillanceData?: any;
+    gate_data?: { question?: string; triage_color?: string; summary?: string };
   };
   timestamp: number;
   error?: string;
@@ -76,13 +85,23 @@ export class RootAgentService {
     private notifyAgent: NotifyAgentService,
     private surveillanceAgent: SurveillanceAgentService,
     private contactTracingAgent: ContactTracingAgentService,
+    private api: ApiService,
   ) {
     this.checkAgentHealth();
   }
 
   /**
-   * Start a complete encounter workflow through the orchestrator.
-   * This orchestrates all agents in sequence: Intake → Geo → Data → Notify → Surveillance
+   * Start a complete encounter workflow through the orchestrator backend.
+   *
+   * Per APP_WORKFLOW.md: the full pipeline (EXTRACTING → GEOCODING → STORING →
+   * FOLLOW_UP_SCHEDULED → ALERTING → DECISION_GATE → NOTIFYING → COMPLETE)
+   * runs server-side as a background task.  This method:
+   *   1. POSTs to /encounter/start to kick off the server-side lifecycle
+   *   2. Polls /encounter/{id}/status every 2 seconds
+   *   3. Updates the local session object on each poll so the dashboard
+   *      reflects real state transitions including CLARIFICATION_GATE and
+   *      DECISION_GATE
+   *   4. Resolves when the session reaches COMPLETE, FAILED, or times out (5 min)
    */
   async startEncounter(params: {
     audio_base64: string;
@@ -90,12 +109,14 @@ export class RootAgentService {
     longitude?: number;
     chw_id?: string;
     sessionId?: string;
+    form_data?: any;
+    telegram_payload?: any;
   }): Promise<EncounterSession> {
     const sessionId = params.sessionId || `encounter-${Date.now()}`;
 
     const session: EncounterSession = {
       sessionId,
-      state: 'IDLE',
+      state: 'LISTENING',
       data: {
         audio: params.audio_base64,
         location:
@@ -107,78 +128,60 @@ export class RootAgentService {
     };
 
     this.activeSessions.set(sessionId, session);
+    this.sessionUpdates.next(session);
 
+    // ── POST to backend — starts the real state-machine lifecycle ────────────
     try {
-      // Step 1: Intake Agent - Extract clinical data from audio
-      session.state = 'LISTENING';
-      this.sessionUpdates.next(session);
-
-      const extractionResult = await this.intakeAgent.extractClinicalData({
-        audio_base64: params.audio_base64,
+      await this.api.post('/encounter/start', {
+        session_id: sessionId,
+        audio_base64: params.audio_base64 || '',
+        latitude: params.latitude ?? 0,
+        longitude: params.longitude ?? 0,
+        chw_id: params.chw_id,
+        form_data: params.form_data,
+        telegram_payload: params.telegram_payload,
       });
-      session.data.extraction = extractionResult;
-      session.state = 'EXTRACTING';
+    } catch (err) {
+      // Backend unavailable — queue offline
+      session.state = 'OFFLINE_QUEUED';
+      session.error =
+        err instanceof Error ? err.message : 'Backend unreachable';
       this.sessionUpdates.next(session);
-
-      // Step 2: Geo Agent - Enrich with location data
-      if (params.latitude !== undefined && params.longitude !== undefined) {
-        session.state = 'GEOCODING';
-        this.sessionUpdates.next(session);
-
-        const geoResult = await this.geoAgent.enrichEncounter({
-          encounter_json: extractionResult,
-          latitude: params.latitude,
-          longitude: params.longitude,
-        });
-        session.data.geoEnriched = geoResult;
-      }
-
-      // Step 3: Data Agent - Store in MongoDB with embeddings
-      session.state = 'STORING';
-      this.sessionUpdates.next(session);
-
-      const storedResult = await this.dataAgent.insertEncounter({
-        enriched_encounter: session.data.geoEnriched || extractionResult,
-      });
-      session.data.mongoStored = storedResult;
-
-      // Step 4: Decision Gate - Wait for human-in-the-loop confirmation
-      session.state = 'DECISION_GATE';
-      this.sessionUpdates.next(session);
-      // Gate confirmation handled by UI component
-
-      // Step 5: Notify Agent - Send notifications
-      session.state = 'NOTIFYING';
-      this.sessionUpdates.next(session);
-
-      if (session.data.geoEnriched?.alert_needed) {
-        const notifyResult = await this.notifyAgent.sendNotification({
-          title: 'Urgent Alert',
-          message: session.data.geoEnriched.alert_message,
-          recipients: session.data.geoEnriched.alert_recipients || [],
-          encounter_id: storedResult?.id,
-        });
-        session.data.notifications = [notifyResult];
-      }
-
-      // Step 6: Surveillance Agent - Trigger post-encounter surveillance check
-      const surveillanceResult =
-        await this.surveillanceAgent.triggerSurveillance({
-          county: session.data.geoEnriched?.admin_hierarchy?.county ?? '',
-          immediate: false,
-        });
-      session.data.surveillanceData = surveillanceResult;
-
-      session.state = 'COMPLETE';
-      this.sessionUpdates.next(session);
-
       return session;
-    } catch (error) {
-      session.error = error instanceof Error ? error.message : 'Unknown error';
-      session.state = 'IDLE';
-      this.sessionUpdates.next(session);
-      throw error;
     }
+
+    // ── Poll backend state every 2 seconds until terminal state ─────────────
+    const TERMINAL = new Set(['COMPLETE', 'FAILED', 'OFFLINE_QUEUED']);
+    const POLL_INTERVAL_MS = 2000;
+    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const deadline = Date.now() + TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+      try {
+        const status: any = await this.api.get(
+          `/encounter/${encodeURIComponent(sessionId)}/status`,
+        );
+        // Merge backend state into the local session
+        session.state = status.state ?? session.state;
+        const d = status.data ?? {};
+        if (d.extracted) session.data.extraction = d.extracted;
+        if (d.enriched) session.data.geoEnriched = d.enriched;
+        if (d.encounter_id) session.data.mongoStored = { id: d.encounter_id };
+        if (d.gate_data) session.data.gate_data = d.gate_data;
+        if (status.error) session.error = status.error;
+
+        this.activeSessions.set(sessionId, session);
+        this.sessionUpdates.next({ ...session });
+
+        if (TERMINAL.has(session.state)) break;
+      } catch {
+        // Transient poll failure — keep trying
+      }
+    }
+
+    return session;
   }
 
   /**
@@ -191,7 +194,9 @@ export class RootAgentService {
   }
 
   /**
-   * Confirm or decline a human-in-the-loop decision gate
+   * Confirm or decline a human-in-the-loop decision gate.
+   * Calls POST /encounter/{sessionId}/confirm on the backend.
+   * The backend's asyncio.Future resolves and the pipeline continues.
    */
   async confirmEncounterDecision(
     sessionId: string,
@@ -200,12 +205,27 @@ export class RootAgentService {
     const session = this.activeSessions.get(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    await this.intakeAgent.confirmDecision(sessionId, confirmed);
+    await this.api.post(`/encounter/${encodeURIComponent(sessionId)}/confirm`, {
+      confirmed,
+    });
 
     if (!confirmed) {
       session.state = 'COMPLETE';
       this.sessionUpdates.next(session);
     }
+  }
+
+  /**
+   * Submit a clarification answer for an encounter in CLARIFICATION_GATE state.
+   * Calls POST /encounter/{sessionId}/clarify on the backend.
+   */
+  async submitClarificationAnswer(
+    sessionId: string,
+    answer: string,
+  ): Promise<void> {
+    await this.api.post(`/encounter/${encodeURIComponent(sessionId)}/clarify`, {
+      answer,
+    });
   }
 
   /**

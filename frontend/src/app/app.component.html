@@ -99,6 +99,41 @@
     <p>&copy; 2026 SihaLink Swarm. Powered by Google ADK & Gemini API.</p>
   </footer>
 
+  <!-- ── CLARIFICATION GATE Modal ──────────────────────────────────────── -->
+  @if (clarificationSession) {
+  <div class="gate-overlay animate-fade-in">
+    <div class="gate-modal" style="border-top: 4px solid #f59e0b;">
+      <div class="gate-header">
+        <span class="gate-triage-badge" style="background:#fef3c7;color:#92400e;">
+          CLARIFICATION NEEDED
+        </span>
+        <h2>Clinical Clarification</h2>
+        <p class="session-label">Session ID: <code>{{ clarificationSession.sessionId }}</code></p>
+      </div>
+
+      <div class="gate-body">
+        <p class="gate-summary">
+          {{ clarificationSession.data?.gate_data?.question || 'Please provide additional clinical details.' }}
+        </p>
+        <div class="gate-preview-card">
+          <textarea class="clarification-input" [(ngModel)]="clarificationAnswer" rows="3"
+            placeholder="Type your answer here…" (keydown.enter)="$event.preventDefault(); submitClarification()">
+          </textarea>
+        </div>
+      </div>
+
+      <div class="gate-actions">
+        <button (click)="submitClarification()" [disabled]="!clarificationAnswer.trim()" class="btn-confirm">
+          ✓ Submit Answer
+        </button>
+        <button (click)="clarificationSession = null; clarificationAnswer = ''" class="btn-decline">
+          ✕ Skip
+        </button>
+      </div>
+    </div>
+  </div>
+  }
+
   <!-- Frosted Glass Decision Gate Modal -->
   <div class="gate-overlay animate-fade-in" *ngIf="gateSession">
     <div class="gate-modal" [class.red]="gateSession.data.geoEnriched?.alert_needed"

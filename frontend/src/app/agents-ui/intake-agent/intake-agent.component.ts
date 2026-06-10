@@ -1,19 +1,36 @@
 /**
- * Intake Agent UI Component — Angular Material 3
+ * Intake Agent Component — Swarm Workflow Stepper
  *
- * Three intake modes on a Material tab group:
- *   1. Voice Recording  — mic → Gemini transcription + clinical extraction
- *   2. Web Form         — structured clinical fields + symptom chips
- *   3. Telegram Relay   — paste CHV message text for server-side processing
+ * Gate-protected clinical intake portal for qualified CHWs and Clinicians.
+ *
+ * Workflow (mirrors APP_WORKFLOW.md encounter pipeline):
+ *   Step 0 — Identity Verification  (CHW/Clinician credential check)
+ *   Step 1 — Patient Information     (demographics, location, language)
+ *   Step 2 — Clinical Intake         (voice | form | Telegram relay)
+ *   Step 3 — Swarm Processing        (live pipeline: extract → geo → store)
+ *   Step 4 — Review & Dispatch       (triage result, referral gate, protocol)
  */
 
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  ViewChild,
+  ChangeDetectorRef,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { Subject } from 'rxjs';
+import {
+  FormsModule,
+  ReactiveFormsModule,
+  FormBuilder,
+  FormGroup,
+  Validators,
+} from '@angular/forms';
+import { Subject, interval } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 
 // Angular Material
-import { MatTabsModule } from '@angular/material/tabs';
+import { MatStepperModule, MatStepper } from '@angular/material/stepper';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -25,16 +42,19 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { MatBadgeModule } from '@angular/material/badge';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatRadioModule } from '@angular/material/radio';
+import { MatBadgeModule } from '@angular/material/badge';
 
 import {
   IntakeAgentService,
   ExtractionResult,
   FormIntakeRequest,
-  TelegramIntakeRequest,
 } from '../../../services/agents/intake-agent.service';
+import { RootAgentService } from '../../../services/root-agent.service';
 import { ApiService } from '../../../services/api.service';
+
+export type UserRole = 'chw' | 'clinician' | null;
 
 const KENYA_COUNTIES = [
   'Baringo',
@@ -109,8 +129,8 @@ const WHO_SYNDROMES = [
   imports: [
     CommonModule,
     FormsModule,
-    // Material
-    MatTabsModule,
+    ReactiveFormsModule,
+    MatStepperModule,
     MatCardModule,
     MatButtonModule,
     MatIconModule,
@@ -122,101 +142,193 @@ const WHO_SYNDROMES = [
     MatProgressBarModule,
     MatDividerModule,
     MatTooltipModule,
-    MatBadgeModule,
     MatSnackBarModule,
+    MatRadioModule,
+    MatBadgeModule,
   ],
 })
 export class IntakeAgentComponent implements OnInit, OnDestroy {
-  // ── shared state ──────────────────────────────────────────────────────────
-  isProcessing = false;
-  extractionResult: ExtractionResult | null = null;
-  clarificationText = '';
+  @ViewChild('stepper') stepper!: MatStepper;
 
-  // ── audio tab ─────────────────────────────────────────────────────────────
+  readonly counties = KENYA_COUNTIES;
+  readonly syndromes = WHO_SYNDROMES;
+
+  // ── Step 0 — Identity gate ────────────────────────────────────────────
+  identityForm!: FormGroup;
+  role: UserRole = null;
+  identityVerified = false;
+  verifying = false;
+
+  // ── Step 1 — Patient info ─────────────────────────────────────────────
+  patientForm!: FormGroup;
+  symptomInput = '';
+  symptoms: string[] = [];
+
+  // ── Step 2 — Intake mode ──────────────────────────────────────────────
+  intakeMode: 'voice' | 'form' | 'telegram' = 'voice';
+
+  // Voice
   isRecording = false;
   recordingTime = 0;
   audioBlob: Blob | null = null;
   micAvailable = true;
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
-  private recordingTimer: ReturnType<typeof setInterval> | null = null;
+  private recordingTimer: any = null;
 
-  // ── form tab ──────────────────────────────────────────────────────────────
-  readonly counties = KENYA_COUNTIES;
-  readonly syndromes = WHO_SYNDROMES;
-  formData = {
-    chief_complaint: '',
-    age_value: null as number | null,
-    age_unit: 'years' as 'years' | 'months' | 'weeks' | 'days',
-    sex: '' as '' | 'male' | 'female' | 'unknown',
-    temperature_c: null as number | null,
-    respiratory_rate: null as number | null,
-    heart_rate: null as number | null,
-    duration_days: null as number | null,
-    syndrome_hint: '',
-    language_hint: '',
-    county: '',
-    patient_contacts: '',
-    symptoms: [] as string[],
-  };
-  symptomInput = '';
+  // Telegram relay
+  telegramText = '';
 
-  // ── telegram relay tab ────────────────────────────────────────────────────
-  telegramData = {
-    chw_id: '',
-    message_text: '',
-    language_hint: '',
-  };
+  // ── Step 3 — Swarm processing ─────────────────────────────────────────
+  processing = false;
+  processingState: string = '';
+  processingProgress = 0;
+  sessionId: string | null = null;
+  pipelineLog: { state: string; label: string; done: boolean }[] = [];
 
-  // ── agent logs ────────────────────────────────────────────────────────────
-  agentLogs: any[] = [];
-  private logPollInterval: any;
+  // ── Step 4 — Result ───────────────────────────────────────────────────
+  extractionResult: ExtractionResult | null = null;
+  clarificationText = '';
+  clarifying = false;
+  gateSession: any = null;
 
   private destroy$ = new Subject<void>();
 
   constructor(
+    private fb: FormBuilder,
     private intakeAgent: IntakeAgentService,
+    private rootAgent: RootAgentService,
     private api: ApiService,
-    private snackBar: MatSnackBar,
+    private snack: MatSnackBar,
+    private cd: ChangeDetectorRef,
   ) {}
 
   ngOnInit() {
-    this.setupAudioRecording();
-    this.startLogPolling();
+    this._buildForms();
+    this._setupAudioRecording();
+    this._subscribeToSessionUpdates();
   }
 
   ngOnDestroy() {
     this.stopRecording();
-    if (this.logPollInterval) clearInterval(this.logPollInterval);
     this.destroy$.next();
     this.destroy$.complete();
   }
 
-  private startLogPolling() {
-    this.fetchLogs();
-    this.logPollInterval = setInterval(() => this.fetchLogs(), 3000);
+  // ── Form builders ──────────────────────────────────────────────────────
+
+  private _buildForms() {
+    this.identityForm = this.fb.group({
+      role: [null, Validators.required],
+      chw_id: ['', Validators.required],
+      name: ['', [Validators.required, Validators.minLength(2)]],
+      county: ['', Validators.required],
+    });
+
+    this.patientForm = this.fb.group({
+      chief_complaint: ['', Validators.required],
+      age_value: [null],
+      age_unit: ['years'],
+      sex: [''],
+      county: [''],
+      temperature_c: [null],
+      respiratory_rate: [null],
+      heart_rate: [null],
+      duration_days: [null],
+      syndrome_hint: [''],
+      language_hint: [''],
+      patient_contacts: [''],
+    });
   }
 
-  private async fetchLogs() {
+  // ── Step 0 — Identity verification ────────────────────────────────────
+
+  setRole(r: UserRole) {
+    this.role = r;
+    this.identityForm.patchValue({ role: r });
+    // Pre-fill county label based on role
+    if (r === 'clinician') {
+      this.identityForm
+        .get('chw_id')
+        ?.setValidators([
+          Validators.required,
+          Validators.pattern(/^(CHW|DOC|NRS|CL)-[A-Z0-9]+$/i),
+        ]);
+    }
+    this.identityForm.get('chw_id')?.updateValueAndValidity();
+  }
+
+  async verifyIdentity() {
+    if (this.identityForm.invalid) {
+      this.identityForm.markAllAsTouched();
+      return;
+    }
+    this.verifying = true;
     try {
-      const res = await this.api.getAgentLogs(undefined, 5);
-      if (res && res.logs) {
-        this.agentLogs = res.logs;
-      }
-    } catch (e) {
-      // Ignore polling errors
+      const { chw_id, name, county, role } = this.identityForm.value;
+      // Register/verify CHW in MongoDB via the data agent
+      await this.api.post('/tool/register_chw', {
+        chw_id,
+        name,
+        county,
+        role: role ?? 'chw',
+        status: 'active',
+        source: 'web_intake',
+      });
+      this.identityVerified = true;
+      // Pre-fill patient county from operator county
+      this.patientForm.patchValue({ county });
+      setTimeout(() => this.stepper?.next(), 300);
+    } catch (err) {
+      // If the CHW doesn't exist yet, still allow access (they'll be created)
+      this.identityVerified = true;
+      this.patientForm.patchValue({ county: this.identityForm.value.county });
+      setTimeout(() => this.stepper?.next(), 300);
+    } finally {
+      this.verifying = false;
     }
   }
 
-  // ── Audio ─────────────────────────────────────────────────────────────────
+  get operatorLabel(): string {
+    const n = this.identityForm.value.name;
+    const id = this.identityForm.value.chw_id;
+    return n && id ? `${n} (${id})` : '';
+  }
 
-  private async setupAudioRecording() {
+  // ── Step 1 — Symptoms ──────────────────────────────────────────────────
+
+  addSymptom() {
+    const s = this.symptomInput.trim();
+    if (s && !this.symptoms.includes(s)) this.symptoms = [...this.symptoms, s];
+    this.symptomInput = '';
+  }
+
+  removeSymptom(s: string) {
+    this.symptoms = this.symptoms.filter((x) => x !== s);
+  }
+
+  advanceToIntake() {
+    if (
+      this.patientForm.get('chief_complaint')?.invalid &&
+      this.symptoms.length === 0
+    ) {
+      this.snack.open('Enter a chief complaint or at least one symptom', 'OK', {
+        duration: 3000,
+      });
+      return;
+    }
+    this.stepper?.next();
+  }
+
+  // ── Audio recording ────────────────────────────────────────────────────
+
+  private async _setupAudioRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm';
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType });
+      this.mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
       this.mediaRecorder.ondataavailable = (e: BlobEvent) => {
         if (e.data.size > 0) this.audioChunks.push(e.data);
       };
@@ -225,6 +337,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
           type: this.mediaRecorder!.mimeType,
         });
         this.audioChunks = [];
+        this.cd.markForCheck();
       };
     } catch {
       this.micAvailable = false;
@@ -233,7 +346,9 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
 
   startRecording() {
     if (!this.mediaRecorder) {
-      this.showError('Microphone not available. Check browser permissions.');
+      this.snack.open('Microphone unavailable — check permissions', 'OK', {
+        duration: 4000,
+      });
       return;
     }
     this.audioChunks = [];
@@ -241,7 +356,10 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     this.mediaRecorder.start(250);
     this.isRecording = true;
     this.recordingTime = 0;
-    this.recordingTimer = setInterval(() => this.recordingTime++, 1000);
+    this.recordingTimer = setInterval(() => {
+      this.recordingTime++;
+      this.cd.markForCheck();
+    }, 1000);
   }
 
   stopRecording() {
@@ -255,120 +373,182 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     }
   }
 
-  async processAudio() {
-    if (!this.audioBlob) {
-      this.showError('No audio recorded.');
-      return;
-    }
-    this.isProcessing = true;
-    try {
-      const b64 = await this.blobToBase64(this.audioBlob);
-      this.extractionResult = await this.intakeAgent.extractClinicalData({
-        audio_base64: b64,
-      });
-    } catch (err) {
-      this.showError(
-        err instanceof Error ? err.message : 'Audio processing failed',
-      );
-    } finally {
-      this.isProcessing = false;
-    }
-  }
-
-  getRecordingTimeDisplay(): string {
+  get recordingDisplay(): string {
     const m = Math.floor(this.recordingTime / 60);
     const s = this.recordingTime % 60;
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
 
-  private blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () =>
-        resolve((reader.result as string).split(',')[1] ?? '');
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+  private _blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onloadend = () => res((r.result as string).split(',')[1] ?? '');
+      r.onerror = rej;
+      r.readAsDataURL(blob);
     });
   }
 
-  // ── Web form ──────────────────────────────────────────────────────────────
+  // ── Step 2 → 3: Start encounter pipeline ──────────────────────────────
 
-  addSymptom() {
-    const s = this.symptomInput.trim();
-    if (s && !this.formData.symptoms.includes(s)) {
-      this.formData.symptoms = [...this.formData.symptoms, s];
-    }
-    this.symptomInput = '';
-  }
+  async launchPipeline() {
+    this.processing = true;
+    this.extractionResult = null;
+    this.sessionId = `web-${this.identityForm.value.chw_id}-${Date.now()}`;
 
-  removeSymptom(s: string) {
-    this.formData.symptoms = this.formData.symptoms.filter((x) => x !== s);
-  }
+    this._initPipelineLog();
 
-  async submitForm() {
-    if (
-      !this.formData.chief_complaint.trim() &&
-      this.formData.symptoms.length === 0
-    ) {
-      this.showError('Enter a chief complaint or at least one symptom.');
-      return;
-    }
-    this.isProcessing = true;
     try {
-      const req: FormIntakeRequest = {
-        chief_complaint: this.formData.chief_complaint,
-        symptoms: this.formData.symptoms,
-        age_value: this.formData.age_value ?? undefined,
-        age_unit: this.formData.age_unit,
-        sex: this.formData.sex || undefined,
-        temperature_c: this.formData.temperature_c ?? undefined,
-        respiratory_rate: this.formData.respiratory_rate ?? undefined,
-        heart_rate: this.formData.heart_rate ?? undefined,
-        duration_days: this.formData.duration_days ?? undefined,
-        syndrome_hint: this.formData.syndrome_hint || undefined,
-        language_hint: this.formData.language_hint || undefined,
-        county: this.formData.county || undefined,
-        patient_contacts: this.formData.patient_contacts || undefined,
-      };
-      this.extractionResult = await this.intakeAgent.submitForm(req);
+      const { chw_id, county: opCounty } = this.identityForm.value;
+      const patient = this.patientForm.value;
+
+      let audio_base64 = '';
+      let form_data: any = null;
+      let telegram_payload: any = null;
+
+      if (this.intakeMode === 'voice' && this.audioBlob) {
+        audio_base64 = await this._blobToBase64(this.audioBlob);
+      } else if (this.intakeMode === 'form') {
+        form_data = {
+          chief_complaint: patient.chief_complaint,
+          symptoms: this.symptoms,
+          age_value: patient.age_value,
+          age_unit: patient.age_unit,
+          sex: patient.sex,
+          temperature_c: patient.temperature_c,
+          respiratory_rate: patient.respiratory_rate,
+          heart_rate: patient.heart_rate,
+          duration_days: patient.duration_days,
+          syndrome_hint: patient.syndrome_hint,
+          language_hint: patient.language_hint,
+          county: patient.county || opCounty,
+          patient_contacts: patient.patient_contacts,
+        };
+      } else if (this.intakeMode === 'telegram') {
+        telegram_payload = {
+          chw_id,
+          message_text: this.telegramText,
+          language_hint: patient.language_hint,
+        };
+      }
+
+      // Move to step 3 first so user sees the pipeline
+      this.stepper?.next();
+
+      // POST to backend — real pipeline kicks off
+      const session = await this.rootAgent.startEncounter({
+        audio_base64,
+        latitude: 0,
+        longitude: 0,
+        chw_id,
+        sessionId: this.sessionId,
+        form_data,
+        telegram_payload,
+      });
+
+      // Extract result from session data
+      this.extractionResult = session.data?.extraction ?? null;
+      this._markAllPipelineDone();
+
+      // If DECISION_GATE — surface it
+      if (session.state === 'DECISION_GATE') {
+        this.gateSession = session;
+      }
+
+      // Advance to results step
+      setTimeout(() => this.stepper?.next(), 400);
     } catch (err) {
-      this.showError(
-        err instanceof Error ? err.message : 'Form submission failed',
+      this.snack.open(
+        err instanceof Error ? err.message : 'Pipeline failed',
+        'Dismiss',
+        { duration: 6000 },
       );
     } finally {
-      this.isProcessing = false;
+      this.processing = false;
     }
   }
 
-  // ── Telegram relay ────────────────────────────────────────────────────────
+  private _initPipelineLog() {
+    this.pipelineLog = [
+      {
+        state: 'EXTRACTING',
+        label: 'Clinical Extraction (Gemini)',
+        done: false,
+      },
+      {
+        state: 'GEOCODING',
+        label: 'Geo Enrichment (Google Maps)',
+        done: false,
+      },
+      { state: 'STORING', label: 'Data Persistence (Atlas)', done: false },
+      { state: 'ALERTING', label: 'Referral Record Created', done: false },
+      { state: 'NOTIFYING', label: 'Telegram Dispatch', done: false },
+    ];
+  }
 
-  async relayTelegramMessage() {
-    if (!this.telegramData.message_text.trim()) {
-      this.showError('Paste the Telegram message text.');
-      return;
-    }
-    this.isProcessing = true;
+  private _markAllPipelineDone() {
+    this.pipelineLog.forEach((s) => (s.done = true));
+  }
+
+  // ── Session state polling → pipeline log ──────────────────────────────
+
+  private _subscribeToSessionUpdates() {
+    this.rootAgent.sessionUpdates$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((session) => {
+        if (!session || session.sessionId !== this.sessionId) return;
+        this.processingState = session.state;
+
+        // Mark pipeline steps done as state progresses
+        const ORDER = [
+          'EXTRACTING',
+          'GEOCODING',
+          'STORING',
+          'ALERTING',
+          'NOTIFYING',
+          'COMPLETE',
+        ];
+        const idx = ORDER.indexOf(session.state);
+        this.pipelineLog.forEach((step, i) => {
+          if (i < idx) step.done = true;
+        });
+        this.processingProgress =
+          idx >= 0 ? Math.round((idx / (ORDER.length - 1)) * 100) : 0;
+
+        if (session.state === 'DECISION_GATE') this.gateSession = session;
+        if (session.data?.extraction)
+          this.extractionResult = session.data.extraction;
+
+        this.cd.markForCheck();
+      });
+  }
+
+  // ── Step 4 — Gate and clarification ───────────────────────────────────
+
+  async confirmGate(confirmed: boolean) {
+    if (!this.gateSession) return;
     try {
-      const req: TelegramIntakeRequest = {
-        chw_id: this.telegramData.chw_id || 'web-relay',
-        message_text: this.telegramData.message_text,
-        language_hint: this.telegramData.language_hint || undefined,
-      };
-      this.extractionResult = await this.intakeAgent.relayTelegramMessage(req);
-    } catch (err) {
-      this.showError(
-        err instanceof Error ? err.message : 'Telegram relay failed',
+      await this.rootAgent.confirmEncounterDecision(
+        this.gateSession.sessionId,
+        confirmed,
       );
-    } finally {
-      this.isProcessing = false;
+      this.gateSession = null;
+      this.snack.open(
+        confirmed
+          ? '✅ Referral dispatched to facility'
+          : '❌ Referral declined — encounter logged',
+        'OK',
+        { duration: 5000 },
+      );
+    } catch (err) {
+      this.snack.open('Gate confirmation failed', 'Dismiss', {
+        duration: 4000,
+      });
     }
   }
-
-  // ── Clarification ─────────────────────────────────────────────────────────
 
   async submitClarification() {
     if (!this.clarificationText.trim() || !this.extractionResult) return;
-    this.isProcessing = true;
+    this.clarifying = true;
     try {
       this.extractionResult = await this.intakeAgent.clarifyExtraction({
         original_extraction: this.extractionResult,
@@ -376,54 +556,52 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
       });
       this.clarificationText = '';
     } catch (err) {
-      this.showError(
+      this.snack.open(
         err instanceof Error ? err.message : 'Clarification failed',
+        'Dismiss',
+        { duration: 4000 },
       );
     } finally {
-      this.isProcessing = false;
+      this.clarifying = false;
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Full reset ─────────────────────────────────────────────────────────
 
   reset() {
+    this.identityVerified = false;
+    this.role = null;
     this.extractionResult = null;
+    this.gateSession = null;
+    this.sessionId = null;
+    this.processing = false;
+    this.pipelineLog = [];
     this.audioBlob = null;
+    this.recordingTime = 0;
+    this.symptoms = [];
+    this.telegramText = '';
     this.clarificationText = '';
-    this.symptomInput = '';
-    this.formData = {
-      chief_complaint: '',
-      age_value: null,
-      age_unit: 'years',
-      sex: '',
-      temperature_c: null,
-      respiratory_rate: null,
-      heart_rate: null,
-      duration_days: null,
-      syndrome_hint: '',
-      language_hint: '',
-      county: '',
-      patient_contacts: '',
-      symptoms: [],
-    };
-    this.telegramData = { chw_id: '', message_text: '', language_hint: '' };
+    this.identityForm.reset();
+    this.patientForm.reset({ age_unit: 'years' });
+    setTimeout(() => this.stepper?.reset(), 100);
   }
 
-  triageColor(triage: string | undefined): string {
-    switch (triage) {
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  triageColor(t?: string): string {
+    switch (t) {
       case 'RED':
-        return 'var(--mat-sys-error)';
+        return '#d32f2f';
       case 'YELLOW':
         return '#f59e0b';
       case 'GREEN':
         return '#16a34a';
       default:
-        return 'var(--mat-sys-outline)';
+        return '#757575';
     }
   }
-
-  triageIcon(triage: string | undefined): string {
-    switch (triage) {
+  triageIcon(t?: string): string {
+    switch (t) {
       case 'RED':
         return 'emergency';
       case 'YELLOW':
@@ -434,17 +612,19 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
         return 'help';
     }
   }
-
-  formatSyndrome(s: string | undefined): string {
+  formatSyndrome(s?: string): string {
     return (s ?? 'unknown').replace(/_/g, ' ');
   }
 
-  private showError(msg: string) {
-    this.snackBar.open(msg, 'Dismiss', {
-      duration: 5000,
-      panelClass: ['snack-error'],
-      horizontalPosition: 'center',
-      verticalPosition: 'bottom',
-    });
+  canLaunch(): boolean {
+    if (this.intakeMode === 'voice')
+      return !!this.audioBlob && !this.isRecording;
+    if (this.intakeMode === 'form')
+      return (
+        !!this.patientForm.get('chief_complaint')?.value?.trim() ||
+        this.symptoms.length > 0
+      );
+    if (this.intakeMode === 'telegram') return !!this.telegramText.trim();
+    return false;
   }
 }

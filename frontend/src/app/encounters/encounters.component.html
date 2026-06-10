@@ -1,462 +1,343 @@
-<!-- Encounters Component — Live sessions + Persisted MongoDB records -->
+<!-- Case Encounters — Material Table with server-side pagination -->
 
-<div class="encounters-container">
-  <div class="page-header">
-    <h2>Case Encounters Log</h2>
-    <p>Live pipeline sessions and all encounters persisted in MongoDB Atlas.</p>
-  </div>
+<div class="enc-shell">
 
-  <!-- View toggle -->
-  <div class="tab-bar">
-    <button class="tab-btn" [class.active]="activeView === 'persisted'" (click)="activeView = 'persisted'">
-      💾 MongoDB Encounters <span class="tab-count">{{ persistedTotal }}</span>
-    </button>
-    <button class="tab-btn" [class.active]="activeView === 'live'" (click)="activeView = 'live'">
-      🔴 Live Sessions <span class="tab-count">{{ liveSessions.length }}</span>
+  <!-- ── Header ────────────────────────────────────────────────── -->
+  <div class="enc-header">
+    <div>
+      <h2>Case Encounters</h2>
+      <p>Clinical encounters submitted by CHVs across Kenya.</p>
+    </div>
+    <button mat-stroked-button (click)="loadEncounters()" [disabled]="loading">
+      <span class="material-symbols-outlined btn-icon">refresh</span>
+      Refresh
     </button>
   </div>
 
-  <!-- ── PERSISTED ENCOUNTERS TAB ─────────────────────────────── -->
-  @if (activeView === 'persisted') {
+  <!-- ── Tab bar ───────────────────────────────────────────────── -->
+  <div class="tab-strip">
+    <button class="strip-tab" [class.active]="activeTab===0" (click)="activeTab=0">
+      🏥 Encounters
+      @if (totalRecords > 0) { <span class="strip-badge">{{ totalRecords }}</span> }
+    </button>
+    <button class="strip-tab" [class.active]="activeTab===1" (click)="activeTab=1">
+      🔴 Live Pipeline
+      @if (liveSessions.length > 0) { <span class="strip-badge">{{ liveSessions.length }}</span> }
+    </button>
+  </div>
 
-  <!-- Filters -->
+  <!-- ══════════════════════════════════════════════════════════════
+       TAB 0 — ENCOUNTERS TABLE
+       ══════════════════════════════════════════════════════════════ -->
+  @if (activeTab === 0) {
+
+  <!-- Filter bar -->
   <div class="filter-bar">
-    <input type="text" [(ngModel)]="filterCounty" placeholder="County (e.g. Kisumu)" class="filter-input" />
-    <input type="text" [(ngModel)]="filterSyndrome" placeholder="Syndrome (e.g. cholera)" class="filter-input" />
-    <select [(ngModel)]="filterTriage" class="filter-select">
-      <option value="">All Triage</option>
-      <option value="RED">🔴 RED</option>
-      <option value="YELLOW">🟡 YELLOW</option>
-      <option value="GREEN">🟢 GREEN</option>
-    </select>
-    <select [(ngModel)]="filterLimit" class="filter-select">
-      <option [value]="20">20 per page</option>
-      <option [value]="50">50 per page</option>
-      <option [value]="100">100 per page</option>
-    </select>
-    <button class="btn-filter" (click)="applyFilters()">🔍 Filter</button>
-    <button class="btn-clear" (click)="clearFilters()">✕ Clear</button>
+    <mat-form-field appearance="outline" class="filter-field">
+      <mat-label>County</mat-label>
+      <input matInput [(ngModel)]="filterCounty" placeholder="e.g. Kisumu" (keyup.enter)="applyFilters()" />
+      <span class="material-symbols-outlined" matSuffix>location_on</span>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" class="filter-field">
+      <mat-label>Syndrome</mat-label>
+      <input matInput [(ngModel)]="filterSyndrome" placeholder="e.g. cholera" (keyup.enter)="applyFilters()" />
+      <span class="material-symbols-outlined" matSuffix>biotech</span>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" class="filter-field narrow">
+      <mat-label>Triage</mat-label>
+      <mat-select [(ngModel)]="filterTriage">
+        <mat-option value="">All</mat-option>
+        <mat-option value="RED">🔴 RED</mat-option>
+        <mat-option value="YELLOW">🟡 YELLOW</mat-option>
+        <mat-option value="GREEN">🟢 GREEN</mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <button mat-flat-button color="primary" (click)="applyFilters()">
+      <span class="material-symbols-outlined btn-icon">search</span> Filter
+    </button>
+    <button mat-stroked-button (click)="clearFilters()">
+      <span class="material-symbols-outlined btn-icon">clear</span> Clear
+    </button>
   </div>
 
-  @if (persistedLoading) {
-  <div class="loading-bar">
-    <div class="loading-fill"></div>
+  <!-- Loading bar -->
+  @if (loading) { <mat-progress-bar mode="indeterminate" class="load-bar"></mat-progress-bar> }
+
+  <!-- Error -->
+  @if (error) {
+  <div class="error-row">
+    <span class="material-symbols-outlined">error_outline</span>
+    <span>{{ error }}</span>
+    <button mat-button color="primary" (click)="loadEncounters()">Retry</button>
   </div>
   }
 
-  @if (persistedError) {
-  <div class="error-banner">⚠️ {{ persistedError }}</div>
-  }
+  <!-- Table -->
+  <div class="table-container mat-elevation-z1">
+    <table mat-table [dataSource]="dataSource" matSort class="enc-table">
 
-  @if (persistedTotal > 0) {
-  <p class="result-count">Showing {{ persistedEncounters.length }} of {{ persistedTotal }} encounters</p>
-  }
-
-  @if (persistedEncounters.length === 0 && !persistedLoading) {
-  <div class="empty-card">
-    <p>No encounters found. Run <code>python data/seed_test_data.py</code> to populate test data.</p>
-  </div>
-  }
-
-  <div class="encounters-list">
-    @for (enc of persistedEncounters; track enc.encounter_id) {
-
-    <!-- Encounter card -->
-    <div class="encounter-card animate-fade-in" [style.border-left-color]="triageColor(enc.extracted?.triage_color)"
-      [class.card-expanded]="isExpanded(enc)">
-
-      <div class="encounter-header">
-        <div class="header-left">
-          <span class="triage-badge" [style.background]="triageColor(enc.extracted?.triage_color) + '20'"
-            [style.color]="triageColor(enc.extracted?.triage_color)">
-            {{ enc.extracted?.triage_color || '—' }}
+      <!-- Triage column -->
+      <ng-container matColumnDef="triage">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>Triage</th>
+        <td mat-cell *matCellDef="let row">
+          <span class="triage-pill" [style.background]="triageBg(row.extracted?.triage_color)"
+            [style.color]="triageColor(row.extracted?.triage_color)">
+            {{ row.extracted?.triage_color || '—' }}
           </span>
-          <span class="syndrome-label">{{ formatSyndrome(enc.extracted?.syndrome) }}</span>
-        </div>
-        <span class="enc-id">{{ enc.encounter_id }}</span>
-      </div>
+        </td>
+      </ng-container>
 
-      <!-- Summary row (always visible) -->
-      <div class="encounter-body">
-        <div class="detail-row">
-          <span class="lbl">📍 Location</span>
-          <span>{{ enc.admin_hierarchy?.ward }}, {{ enc.admin_hierarchy?.county }}</span>
-        </div>
-        @if (enc.extracted?.chief_complaint) {
-        <div class="detail-row">
-          <span class="lbl">🩺 Complaint</span>
-          <span>{{ enc.extracted.chief_complaint }}</span>
-        </div>
-        }
-        <div class="detail-row">
-          <span class="lbl">👤 Patient</span>
-          <span>
-            {{ enc.extracted?.age?.value }}{{ enc.extracted?.age?.unit ? ' ' + enc.extracted.age.unit : '' }}
-            {{ enc.extracted?.sex || '' }}
-          </span>
-        </div>
-        @if (enc.extracted?.symptoms?.length) {
-        <div class="detail-row">
-          <span class="lbl">🔬 Symptoms</span>
-          <span class="symptom-chips">
-            @for (s of enc.extracted.symptoms.slice(0,4); track s) {
-            <span class="chip">{{ s }}</span>
+      <!-- Syndrome column -->
+      <ng-container matColumnDef="syndrome">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>Syndrome</th>
+        <td mat-cell *matCellDef="let row" class="capitalize">
+          {{ formatSyndrome(row.extracted?.syndrome) || '—' }}
+        </td>
+      </ng-container>
+
+      <!-- Complaint column -->
+      <ng-container matColumnDef="complaint">
+        <th mat-header-cell *matHeaderCellDef>Chief Complaint</th>
+        <td mat-cell *matCellDef="let row" class="ellipsis" [matTooltip]="row.extracted?.chief_complaint">
+          {{ row.extracted?.chief_complaint || '—' }}
+        </td>
+      </ng-container>
+
+      <!-- Location column -->
+      <ng-container matColumnDef="location">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>Location</th>
+        <td mat-cell *matCellDef="let row">
+          {{ row.admin_hierarchy?.ward || '—' }},
+          <span class="county-text">{{ row.admin_hierarchy?.county || '—' }}</span>
+        </td>
+      </ng-container>
+
+      <!-- Patient column -->
+      <ng-container matColumnDef="patient">
+        <th mat-header-cell *matHeaderCellDef>Patient</th>
+        <td mat-cell *matCellDef="let row">
+          {{ row.extracted?.age?.value }}{{ row.extracted?.age?.unit ? ' '+row.extracted.age.unit : '' }}
+          {{ row.extracted?.sex ? '· '+row.extracted.sex : '' }}
+        </td>
+      </ng-container>
+
+      <!-- CHW column -->
+      <ng-container matColumnDef="chw">
+        <th mat-header-cell *matHeaderCellDef>CHW</th>
+        <td mat-cell *matCellDef="let row" class="mono-small">{{ row.chw_id || '—' }}</td>
+      </ng-container>
+
+      <!-- Timestamp column -->
+      <ng-container matColumnDef="timestamp">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>Recorded</th>
+        <td mat-cell *matCellDef="let row" class="timestamp-cell">
+          {{ row.timestamp | date:'dd MMM yy HH:mm' }}
+        </td>
+      </ng-container>
+
+      <!-- Expand column -->
+      <ng-container matColumnDef="expand">
+        <th mat-header-cell *matHeaderCellDef></th>
+        <td mat-cell *matCellDef="let row">
+          <button mat-icon-button (click)="$event.stopPropagation(); toggleRow(row)"
+            [matTooltip]="isExpanded(row) ? 'Collapse' : 'View Details'">
+            <span class="material-symbols-outlined">
+              {{ isExpanded(row) ? 'keyboard_arrow_up' : 'keyboard_arrow_down' }}
+            </span>
+          </button>
+        </td>
+      </ng-container>
+
+      <!-- ── Expandable detail row ────────────────────────────── -->
+      <ng-container matColumnDef="expandedDetail">
+        <td mat-cell *matCellDef="let row" [attr.colspan]="displayedColumns.length">
+          @if (isExpanded(row)) {
+          <div class="detail-expansion" [@detailExpand]>
+
+            @if (detailLoading) {
+            <mat-progress-bar mode="indeterminate" style="border-radius:4px"></mat-progress-bar>
             }
-            @if (enc.extracted.symptoms.length > 4) {
-            <span class="chip chip-more">+{{ enc.extracted.symptoms.length - 4 }} more</span>
-            }
-          </span>
-        </div>
-        }
-        <div class="detail-row">
-          <span class="lbl">👷 CHW</span>
-          <span>{{ enc.chw_id }}</span>
-        </div>
-        <div class="detail-row">
-          <span class="lbl">🕒 Timestamp</span>
-          <span>{{ enc.timestamp | date:'dd MMM yyyy HH:mm' }}</span>
-        </div>
-      </div>
 
-      <!-- Card footer — View Details button -->
-      <div class="encounter-footer">
-        <button class="btn-view-detail" (click)="toggleDetail(enc)">
-          @if (isExpanded(enc)) {
-          ▲ Hide Details
-          } @else {
-          🔍 View Details
-          }
-        </button>
-      </div>
+            @if (!detailLoading && detailEncounter) {
+            <div class="detail-grid">
 
-      <!-- ── INLINE DETAIL PANEL ─────────────────────────────── -->
-      @if (isExpanded(enc)) {
-      <div class="detail-panel animate-expand">
-
-        @if (detailLoading) {
-        <div class="detail-loading">
-          <div class="loading-bar">
-            <div class="loading-fill"></div>
-          </div>
-          <p>Loading full encounter data…</p>
-        </div>
-        }
-
-        @if (!detailLoading && detailEncounter) {
-        <div class="detail-sections">
-
-          <!-- ── Clinical Section ── -->
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">🩺</span>
-              <h4>Clinical Assessment</h4>
-            </div>
-            <div class="section-grid">
-              <div class="section-field">
-                <span class="field-label">Syndrome</span>
-                <span class="field-value capitalize">{{ formatSyndrome(detailEncounter.extracted?.syndrome) }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Triage Color</span>
-                <span class="triage-badge-sm"
-                  [style.background]="triageColor(detailEncounter.extracted?.triage_color) + '20'"
-                  [style.color]="triageColor(detailEncounter.extracted?.triage_color)">
-                  {{ detailEncounter.extracted?.triage_color || '—' }}
-                </span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Language</span>
-                <span class="field-value">{{ detailEncounter.extracted?.language || '—' }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">AI Confidence</span>
-                <span class="field-value">
-                  @if (detailEncounter.extracted?.confidence) {
-                  {{ (detailEncounter.extracted.confidence * 100).toFixed(0) }}%
-                  } @else { — }
-                </span>
-              </div>
-              <div class="section-field full-span">
-                <span class="field-label">Chief Complaint</span>
-                <span class="field-value">{{ detailEncounter.extracted?.chief_complaint || '—' }}</span>
-              </div>
-              @if (detailEncounter.extracted?.symptoms?.length) {
-              <div class="section-field full-span">
-                <span class="field-label">All Symptoms</span>
-                <div class="symptom-chips">
+              <!-- Clinical -->
+              <div class="detail-section">
+                <p class="section-title">🩺 Clinical</p>
+                <dl class="detail-list">
+                  <dt>Syndrome</dt>
+                  <dd class="capitalize">{{ formatSyndrome(detailEncounter.extracted?.syndrome) }}</dd>
+                  <dt>Triage</dt>
+                  <dd><span class="triage-pill" [style.background]="triageBg(detailEncounter.extracted?.triage_color)"
+                      [style.color]="triageColor(detailEncounter.extracted?.triage_color)">{{
+                      detailEncounter.extracted?.triage_color || '—' }}</span></dd>
+                  <dt>Language</dt>
+                  <dd>{{ detailEncounter.extracted?.detected_language || detailEncounter.extracted?.language || '—' }}
+                  </dd>
+                  <dt>Confidence</dt>
+                  <dd>{{ detailEncounter.extracted?.confidence ?
+                    (detailEncounter.extracted.confidence*100).toFixed(0)+'%' : '—' }}</dd>
+                </dl>
+                @if (detailEncounter.extracted?.symptoms?.length) {
+                <div class="detail-chips">
                   @for (s of detailEncounter.extracted.symptoms; track s) {
-                  <span class="chip">{{ s }}</span>
+                  <span class="detail-chip">{{ s }}</span>
                   }
                 </div>
-              </div>
-              }
-              @if (detailEncounter.extracted?.danger_signs?.length) {
-              <div class="section-field full-span">
-                <span class="field-label">⚠️ Danger Signs</span>
-                <div class="symptom-chips">
+                }
+                @if (detailEncounter.extracted?.danger_signs?.length) {
+                <div class="detail-chips">
                   @for (d of detailEncounter.extracted.danger_signs; track d) {
-                  <span class="chip chip-danger">{{ d }}</span>
+                  <span class="detail-chip danger">⚠️ {{ d }}</span>
                   }
                 </div>
+                }
               </div>
-              }
-            </div>
-          </div>
 
-          <!-- ── Vitals Section ── -->
-          @if (detailEncounter.extracted?.vitals) {
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">💗</span>
-              <h4>Vital Signs</h4>
-            </div>
-            <div class="vitals-grid">
-              @if (detailEncounter.extracted.vitals.temperature) {
-              <div class="vital-card">
-                <span class="vital-icon">🌡️</span>
-                <span class="vital-val">{{ detailEncounter.extracted.vitals.temperature }}°C</span>
-                <span class="vital-lbl">Temperature</span>
-              </div>
-              }
-              @if (detailEncounter.extracted.vitals.blood_pressure) {
-              <div class="vital-card">
-                <span class="vital-icon">🩸</span>
-                <span class="vital-val">{{ detailEncounter.extracted.vitals.blood_pressure }}</span>
-                <span class="vital-lbl">Blood Pressure</span>
-              </div>
-              }
-              @if (detailEncounter.extracted.vitals.pulse) {
-              <div class="vital-card">
-                <span class="vital-icon">❤️</span>
-                <span class="vital-val">{{ detailEncounter.extracted.vitals.pulse }} bpm</span>
-                <span class="vital-lbl">Pulse</span>
-              </div>
-              }
-              @if (detailEncounter.extracted.vitals.spo2) {
-              <div class="vital-card">
-                <span class="vital-icon">💨</span>
-                <span class="vital-val">{{ detailEncounter.extracted.vitals.spo2 }}%</span>
-                <span class="vital-lbl">SpO₂</span>
-              </div>
-              }
-              @if (detailEncounter.extracted.vitals.respiratory_rate) {
-              <div class="vital-card">
-                <span class="vital-icon">🫁</span>
-                <span class="vital-val">{{ detailEncounter.extracted.vitals.respiratory_rate }}/min</span>
-                <span class="vital-lbl">Resp. Rate</span>
-              </div>
-              }
-              @if (detailEncounter.extracted.vitals.muac) {
-              <div class="vital-card">
-                <span class="vital-icon">📏</span>
-                <span class="vital-val">{{ detailEncounter.extracted.vitals.muac }} cm</span>
-                <span class="vital-lbl">MUAC</span>
-              </div>
-              }
-            </div>
-          </div>
-          }
-
-          <!-- ── Patient Section ── -->
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">👤</span>
-              <h4>Patient Demographics</h4>
-            </div>
-            <div class="section-grid">
-              <div class="section-field">
-                <span class="field-label">Age</span>
-                <span class="field-value">
-                  {{ detailEncounter.extracted?.age?.value }}
-                  {{ detailEncounter.extracted?.age?.unit || '' }}
-                </span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Sex</span>
-                <span class="field-value">{{ detailEncounter.extracted?.sex || '—' }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">CHW ID</span>
-                <span class="field-value mono">{{ detailEncounter.chw_id }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Source</span>
-                <span class="field-value">{{ detailEncounter.extracted?.source || 'CHW report' }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- ── Geographic Section ── -->
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">📍</span>
-              <h4>Geographic Enrichment</h4>
-            </div>
-            <div class="section-grid">
-              <div class="section-field">
-                <span class="field-label">County</span>
-                <span class="field-value">{{ detailEncounter.admin_hierarchy?.county || '—' }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Sub-County</span>
-                <span class="field-value">{{ detailEncounter.admin_hierarchy?.sub_county || '—' }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Ward</span>
-                <span class="field-value">{{ detailEncounter.admin_hierarchy?.ward || '—' }}</span>
-              </div>
-              <div class="section-field">
-                <span class="field-label">Village</span>
-                <span class="field-value">{{ detailEncounter.admin_hierarchy?.village || '—' }}</span>
-              </div>
-              @if (detailEncounter.gps?.lat) {
-              <div class="section-field">
-                <span class="field-label">GPS</span>
-                <span class="field-value mono">{{ detailEncounter.gps?.lat?.toFixed(5) }}, {{
-                  detailEncounter.gps?.lng?.toFixed(5) }}</span>
-              </div>
-              }
-            </div>
-          </div>
-
-          <!-- ── Nearest Facilities Section ── -->
-          @if (detailEncounter.nearest_facilities?.length) {
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">🏥</span>
-              <h4>Nearest Facilities</h4>
-            </div>
-            <div class="facilities-list">
-              @for (f of detailEncounter.nearest_facilities; track f.name; let i = $index) {
-              <div class="facility-row" [class.facility-top]="i === 0">
-                <div class="facility-rank">{{ i + 1 }}</div>
-                <div class="facility-info">
-                  <span class="facility-name">{{ f.name }}</span>
-                  <span class="facility-type">{{ f.type || f.facility_type || '' }}</span>
-                </div>
-                <div class="facility-meta">
-                  @if (f.distance_km) {
-                  <span class="facility-dist">📍 {{ f.distance_km?.toFixed(1) }} km</span>
+              <!-- Vitals -->
+              <div class="detail-section">
+                <p class="section-title">💗 Vitals</p>
+                <dl class="detail-list">
+                  <dt>Age</dt>
+                  <dd>{{ detailEncounter.extracted?.age?.value }} {{ detailEncounter.extracted?.age?.unit || '' }}</dd>
+                  <dt>Sex</dt>
+                  <dd>{{ detailEncounter.extracted?.sex || '—' }}</dd>
+                  @if (detailEncounter.extracted?.vitals?.temperature) {
+                  <dt>Temp</dt>
+                  <dd>{{ detailEncounter.extracted.vitals.temperature }}°C</dd>
                   }
-                  @if (f.eta_minutes) {
-                  <span class="facility-eta">🕒 {{ facilityEta(f.eta_minutes) }}</span>
+                  @if (detailEncounter.extracted?.vitals?.blood_pressure) {
+                  <dt>BP</dt>
+                  <dd>{{ detailEncounter.extracted.vitals.blood_pressure }}</dd>
                   }
+                  @if (detailEncounter.extracted?.vitals?.pulse) {
+                  <dt>Pulse</dt>
+                  <dd>{{ detailEncounter.extracted.vitals.pulse }} bpm</dd>
+                  }
+                  @if (detailEncounter.extracted?.vitals?.spo2) {
+                  <dt>SpO₂</dt>
+                  <dd>{{ detailEncounter.extracted.vitals.spo2 }}%</dd>
+                  }
+                  @if (detailEncounter.extracted?.vitals?.respiratory_rate) {
+                  <dt>RR</dt>
+                  <dd>{{ detailEncounter.extracted.vitals.respiratory_rate }}/min</dd>
+                  }
+                </dl>
+              </div>
+
+              <!-- Location -->
+              <div class="detail-section">
+                <p class="section-title">📍 Location</p>
+                <dl class="detail-list">
+                  <dt>County</dt>
+                  <dd>{{ detailEncounter.admin_hierarchy?.county || '—' }}</dd>
+                  <dt>Sub-County</dt>
+                  <dd>{{ detailEncounter.admin_hierarchy?.sub_county || '—' }}</dd>
+                  <dt>Ward</dt>
+                  <dd>{{ detailEncounter.admin_hierarchy?.ward || '—' }}</dd>
+                  <dt>Village</dt>
+                  <dd>{{ detailEncounter.admin_hierarchy?.village || '—' }}</dd>
+                  <dt>CHW</dt>
+                  <dd class="mono-small">{{ detailEncounter.chw_id }}</dd>
+                </dl>
+              </div>
+
+              <!-- Facilities -->
+              @if (detailEncounter.nearest_facilities?.length) {
+              <div class="detail-section">
+                <p class="section-title">🏥 Nearest Facilities</p>
+                @for (f of detailEncounter.nearest_facilities; track f.name; let i = $index) {
+                <div class="facility-item" [class.top]="i===0">
+                  <span class="f-rank">{{ i+1 }}</span>
+                  <div class="f-info">
+                    <span class="f-name">{{ f.name }}</span>
+                    <span class="f-type">{{ f.type || f.facility_type || '' }}</span>
+                  </div>
+                  <div class="f-meta">
+                    @if (f.distance_km) { <span>📍 {{ f.distance_km?.toFixed(1) }} km</span> }
+                    @if (f.eta_minutes) { <span>🕒 {{ facilityEta(f.eta_minutes) }}</span> }
+                  </div>
                 </div>
+                }
               </div>
               }
+
             </div>
-          </div>
-          }
-
-          <!-- ── CHW Notes Section ── -->
-          @if (detailEncounter.extracted?.notes || detailEncounter.notes) {
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">📝</span>
-              <h4>CHW Notes</h4>
-            </div>
-            <p class="notes-text">{{ detailEncounter.extracted?.notes || detailEncounter.notes }}</p>
-          </div>
-          }
-
-          <!-- ── Referral / Alert flags ── -->
-          @if (detailEncounter.alert_needed || detailEncounter.referral_id) {
-          <div class="detail-section">
-            <div class="section-header">
-              <span class="section-icon">🚨</span>
-              <h4>Referral &amp; Alert</h4>
-            </div>
-            <div class="section-grid">
-              @if (detailEncounter.referral_id) {
-              <div class="section-field">
-                <span class="field-label">Referral ID</span>
-                <span class="field-value mono">{{ detailEncounter.referral_id }}</span>
-              </div>
-              }
-              @if (detailEncounter.alert_needed !== undefined) {
-              <div class="section-field">
-                <span class="field-label">Alert Needed</span>
-                <span class="field-value" [style.color]="detailEncounter.alert_needed ? '#d32f2f' : '#388e3c'">
-                  {{ detailEncounter.alert_needed ? '🚨 Yes' : '✅ No' }}
-                </span>
-              </div>
-              }
-              @if (detailEncounter.recommended_facility?.name) {
-              <div class="section-field full-span">
-                <span class="field-label">Recommended Facility</span>
-                <span class="field-value">{{ detailEncounter.recommended_facility.name }}</span>
-              </div>
-              }
-            </div>
-          </div>
-          }
-
-        </div>
-        }
-      </div>
-      }
-
-    </div>
-    }
-  </div>
-  }
-
-  <!-- ── LIVE SESSIONS TAB ──────────────────────────────────────── -->
-  @if (activeView === 'live') {
-  @if (liveSessions.length === 0) {
-  <div class="empty-card">
-    <p>No live sessions active. Submit a new encounter via the Intake Agent or Telegram bot.</p>
-  </div>
-  }
-
-  <div class="encounters-list">
-    @for (session of liveSessions; track session.sessionId) {
-    <div class="encounter-card" [style.border-left-color]="getStateColor(session.state)">
-      <div class="encounter-header">
-        <div class="header-left">
-          <h3>Session: <code>{{ session.sessionId }}</code></h3>
-        </div>
-        <span class="state-badge" [style.color]="getStateColor(session.state)"
-          [style.border-color]="getStateColor(session.state)">
-          {{ session.state }}
-        </span>
-      </div>
-
-      <div class="encounter-body">
-        <div class="detail-row">
-          <span class="lbl">🕒 Started</span>
-          <span>{{ session.timestamp | date:'medium' }}</span>
-        </div>
-        @if (session.error) {
-        <div class="error-banner">⚠️ {{ session.error }}</div>
-        }
-        @if (session.state === 'DECISION_GATE') {
-        <div class="gate-notice">🔔 Awaiting CHV approval to dispatch referral</div>
-        }
-        @if (session.data?.extraction?.symptoms?.length) {
-        <div class="detail-row">
-          <span class="lbl">🔬 Symptoms</span>
-          <span class="symptom-chips">
-            @for (s of session.data.extraction.symptoms; track s) {
-            <span class="chip">{{ s }}</span>
             }
+          </div>
+          }
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="displayedColumns; sticky: true"></tr>
+      <tr mat-row *matRowDef="let row; columns: displayedColumns" class="data-row"
+        [class.expanded-row]="isExpanded(row)" (click)="toggleRow(row)"></tr>
+      <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
+
+      <!-- No data row -->
+      <tr class="mat-row no-data-row" *matNoDataRow>
+        <td [attr.colspan]="displayedColumns.length">
+          @if (!loading && !error) {
+          <div class="empty-state">
+            <span class="material-symbols-outlined">medical_services</span>
+            <p>No encounters match your filters.</p>
+          </div>
+          }
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Paginator -->
+  <mat-paginator [length]="totalRecords" [pageSize]="pageSize" [pageIndex]="pageIndex"
+    [pageSizeOptions]="pageSizeOptions" showFirstLastButtons (page)="onPageChange($event)" aria-label="Select page">
+  </mat-paginator>
+  }
+
+  <!-- ══════════════════════════════════════════════════════════════
+       TAB 1 — LIVE PIPELINE
+       ══════════════════════════════════════════════════════════════ -->
+  @if (activeTab === 1) {
+
+  @if (liveSessions.length === 0) {
+  <div class="empty-state-lg">
+    <span class="material-symbols-outlined">cable</span>
+    <p>No encounters currently running through the swarm pipeline.</p>
+  </div>
+  }
+
+  <div class="live-list">
+    @for (s of liveSessions; track s.sessionId) {
+    <mat-card appearance="outlined" class="live-card" [style.border-left-color]="getStateColor(s.state)">
+      <mat-card-content>
+        <div class="live-header">
+          <code class="session-code">{{ s.sessionId }}</code>
+          <span class="state-chip" [style.color]="getStateColor(s.state)" [style.border-color]="getStateColor(s.state)">
+            {{ s.state }}
           </span>
         </div>
-        }
-        @if (session.data?.geoEnriched?.admin_hierarchy) {
-        <div class="detail-row">
-          <span class="lbl">📍 Location</span>
-          <span>{{ session.data.geoEnriched.admin_hierarchy.ward }}, {{ session.data.geoEnriched.admin_hierarchy.county
-            }}</span>
+        <div class="live-meta">
+          <span>🕒 {{ s.timestamp | date:'medium' }}</span>
         </div>
+        @if (s.state === 'DECISION_GATE') {
+        <div class="gate-notice">🔔 Awaiting CHV approval before referral dispatch</div>
         }
-      </div>
-
-      <div class="encounter-footer">
-        <button (click)="clearSession(session.sessionId)" class="btn-remove">🗑️ Remove</button>
-      </div>
-    </div>
+        @if (s.state === 'CLARIFICATION_GATE') {
+        <div class="gate-notice clarify">❓ {{ s.data?.gate_data?.question || 'Additional details needed' }}</div>
+        }
+        @if (s.error) { <div class="error-notice">⚠️ {{ s.error }}</div> }
+      </mat-card-content>
+      <mat-card-actions align="end">
+        <button mat-button color="warn" (click)="clearSession(s.sessionId)">
+          <span class="material-symbols-outlined btn-icon">delete</span> Remove
+        </button>
+      </mat-card-actions>
+    </mat-card>
     }
   </div>
   }
+
 </div>

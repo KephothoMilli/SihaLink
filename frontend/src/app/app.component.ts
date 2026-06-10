@@ -7,6 +7,7 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { RouterModule, Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { Observable, Subscription } from 'rxjs';
 import { RootAgentService } from '../services/root-agent.service';
 import { ApiService } from '../services/api.service';
@@ -31,7 +32,7 @@ export interface AppToast {
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, FormsModule],
 })
 export class AppComponent implements OnInit, OnDestroy {
   title = 'SihaLink - Multi-Agent System';
@@ -42,6 +43,8 @@ export class AppComponent implements OnInit, OnDestroy {
   isOnline = navigator.onLine;
   offlineQueueSize = 0;
   gateSession: any = null;
+  clarificationSession: any = null; // session waiting for CLARIFICATION_GATE answer
+  clarificationAnswer = '';
   sseConnected = false;
 
   // Toast notification queue — holds both agent-health and live swarm alerts
@@ -126,12 +129,27 @@ export class AppComponent implements OnInit, OnDestroy {
             'warning',
             '🔔',
           );
+        } else if (session?.state === 'CLARIFICATION_GATE') {
+          this.clarificationSession = session;
+          this.clarificationAnswer = '';
+          this.showToast(
+            'CHV clarification needed — answer below',
+            'info',
+            '❓',
+          );
         } else if (
           this.gateSession &&
           session &&
           this.gateSession.sessionId === session.sessionId
         ) {
           this.gateSession = null;
+        } else if (
+          this.clarificationSession &&
+          session &&
+          this.clarificationSession.sessionId === session.sessionId
+        ) {
+          this.clarificationSession = null;
+          this.clarificationAnswer = '';
         }
       }),
     );
@@ -203,6 +221,20 @@ export class AppComponent implements OnInit, OnDestroy {
       this.gateSession = null;
     } catch (error) {
       console.error('Failed to confirm decision gate:', error);
+    }
+  }
+
+  async submitClarification() {
+    if (!this.clarificationSession || !this.clarificationAnswer.trim()) return;
+    try {
+      await this.rootAgent.submitClarificationAnswer(
+        this.clarificationSession.sessionId,
+        this.clarificationAnswer.trim(),
+      );
+      this.clarificationAnswer = '';
+      this.clarificationSession = null;
+    } catch (error) {
+      console.error('Failed to submit clarification:', error);
     }
   }
 

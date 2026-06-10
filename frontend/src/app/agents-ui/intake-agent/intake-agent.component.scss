@@ -1,344 +1,515 @@
-// ── Intake Agent — Material 3 component styles ────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// SihaLink — Intake Agent (Stepper)
+// ═══════════════════════════════════════════════════════════════════════════
 
-.intake-container {
-  max-width: 1000px;
+.intake-shell {
+  max-width: 860px;
   margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
+  padding: 1.5rem 1rem 4rem;
 }
 
-// ── Page header ────────────────────────────────────────────────────────────
-.page-header {
+// ── Page hero ─────────────────────────────────────────────────────────────
+.page-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--mat-sys-on-surface);
+    margin: 0 0 0.25rem;
+  }
+
+  p {
+    font-size: 0.875rem;
+    color: var(--mat-sys-on-surface-variant);
+    margin: 0;
+  }
+}
+
+.operator-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem 0.35rem 0.5rem;
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+  border-radius: 99px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+
+  .material-symbols-outlined { font-size: 1.1rem; }
+}
+
+// ── Stepper overrides ─────────────────────────────────────────────────────
+.intake-stepper {
+  background: transparent !important;
+
+  ::ng-deep .mat-step-header {
+    border-radius: 12px;
+    padding: 0 0.75rem;
+  }
+  ::ng-deep .mat-stepper-horizontal-line {
+    flex: 1;
+    margin: 0 0.5rem;
+    border-top-color: var(--mat-sys-outline-variant);
+  }
+}
+
+.step-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.step-icon { font-size: 1rem; }
+
+// ── Step content shell ────────────────────────────────────────────────────
+.step-content {
+  padding: 1.75rem 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.step-header {
   display: flex;
   align-items: flex-start;
   gap: 1rem;
-  margin-bottom: 1.75rem;
+
+  h2 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin: 0 0 0.25rem;
+    color: var(--mat-sys-on-surface);
+  }
 }
-.header-icon {
-  font-size: 2.5rem;
+.step-hero-icon {
+  font-size: 2.2rem;
   color: var(--mat-sys-primary);
+  flex-shrink: 0;
   margin-top: 0.1rem;
 }
-.subtitle { color: var(--mat-sys-on-surface-variant); margin-top: 0.25rem; }
-
-// ── Global progress bar ───────────────────────────────────────────────────
-.global-progress {
-  border-radius: 4px;
-  margin-bottom: 1.25rem;
-}
-
-// ── Agent Logs ────────────────────────────────────────────────────────────
-.agent-logs-card {
-  margin-bottom: 1.5rem;
-  background-color: var(--mat-sys-surface-container-lowest);
-  border-width: 1px !important;
-  border-color: var(--mat-sys-outline-variant) !important;
-}
-.agent-logs-content {
-  max-height: 200px;
-  overflow-y: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.85rem;
-  padding: 0.5rem 1rem !important;
-  background-color: #1e1e2f;
-  border-radius: 4px;
-  color: #e0e0e0;
-}
-.log-list {
-  list-style: none;
-  padding: 0;
+.step-subtitle {
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 0.875rem;
   margin: 0;
 }
-.log-item {
+
+// ── Role cards ────────────────────────────────────────────────────────────
+.role-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.role-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  border: 2px solid var(--mat-sys-outline-variant);
+  border-radius: 16px;
+  background: var(--mat-sys-surface-container-low);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  text-align: center;
+  user-select: none;
+
+  &:hover {
+    border-color: var(--mat-sys-primary);
+    transform: translateY(-2px);
+  }
+
+  &.selected {
+    border-color: var(--mat-sys-primary);
+    background: var(--mat-sys-primary-container);
+    .role-icon, .role-title { color: var(--mat-sys-on-primary-container); }
+  }
+}
+.role-icon    { font-size: 2.5rem; color: var(--mat-sys-primary); }
+.role-title   { font-size: 0.95rem; font-weight: 700; color: var(--mat-sys-on-surface); }
+.role-desc    { font-size: 0.78rem; color: var(--mat-sys-on-surface-variant); }
+
+// ── Credential fields ─────────────────────────────────────────────────────
+.credential-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 1rem;
+  animation: fade-in 0.2s ease;
+}
+
+// ── Patient form grid ─────────────────────────────────────────────────────
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 1rem;
+}
+.span-full { grid-column: 1 / -1; }
+
+.symptom-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.symptom-field { width: 100%; }
+.chip-set { flex-wrap: wrap; gap: 0.35rem; display: flex; }
+
+// ── Intake mode tabs ──────────────────────────────────────────────────────
+.mode-tabs {
   display: flex;
   gap: 0.5rem;
-  padding: 0.25rem 0;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-  line-height: 1.4;
+  border-bottom: 2px solid var(--mat-sys-outline-variant);
+  padding-bottom: 0;
+  margin-bottom: 0.5rem;
 }
-.log-item:last-child {
-  border-bottom: none;
+.mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.65rem 1.1rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--mat-sys-on-surface-variant);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  border-radius: 0;
+
+  .material-symbols-outlined { font-size: 1.1rem; }
+
+  &:hover { color: var(--mat-sys-on-surface); }
+  &.active { color: var(--mat-sys-primary); border-bottom-color: var(--mat-sys-primary); }
 }
-.log-time { color: #8b949e; flex-shrink: 0; }
-.log-agent { color: #58a6ff; font-weight: bold; flex-shrink: 0; }
-.log-step { color: #7ee787; flex-shrink: 0; }
-.log-detail { word-break: break-word; }
 
-.log-level-error .log-step { color: #ff7b72; }
-.log-level-warning .log-step { color: #d2a8ff; }
-.log-level-success .log-step { color: #3fb950; }
+// ── Voice recorder ────────────────────────────────────────────────────────
+.voice-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.5rem;
+  background: var(--mat-sys-surface-container-lowest);
+  border-radius: 16px;
+}
 
-// ── Results section ────────────────────────────────────────────────────────
-.results-section { display: flex; flex-direction: column; gap: 1rem; }
+.recorder-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 130px;
+  justify-content: center;
+}
 
-// Triage header card
-.triage-card { border-width: 2px !important; }
-.triage-row {
+.waveform {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
-  flex-wrap: wrap;
+  gap: 5px;
+  height: 60px;
 }
-.triage-icon { font-size: 2.5rem; }
-.triage-label { font-weight: 700; }
-.triage-syndrome, .triage-confidence { min-width: 120px; }
-.spacer { flex: 1; }
-.muted { color: var(--mat-sys-on-surface-variant); }
+.wave-bar {
+  width: 6px;
+  border-radius: 3px;
+  background: var(--mat-sys-primary);
+  height: 14px;
+  animation: wave 0.9s ease-in-out infinite alternate;
 
-// Results two-column grid
-.results-grid {
-  display: grid;
-  grid-template-columns: 1fr 360px;
+  &:nth-child(1) { height: 14px; }
+  &:nth-child(2) { height: 28px; }
+  &:nth-child(3) { height: 44px; }
+  &:nth-child(4) { height: 56px; }
+  &:nth-child(5) { height: 44px; }
+  &:nth-child(6) { height: 28px; }
+  &:nth-child(7) { height: 14px; }
+}
+@keyframes wave {
+  from { transform: scaleY(0.3); opacity: 0.6; }
+  to   { transform: scaleY(1);   opacity: 1; }
+}
+
+.timer-display {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--mat-sys-primary);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+.record-hint { color: var(--mat-sys-error); font-size: 0.85rem; margin: 0; font-weight: 600; }
+.idle-icon   { font-size: 3.5rem; color: var(--mat-sys-outline); }
+.idle-label  { font-size: 1rem; font-weight: 600; color: var(--mat-sys-on-surface); margin: 0; }
+.idle-hint   { font-size: 0.82rem; color: var(--mat-sys-on-surface-variant); margin: 0; }
+.ready-icon  { font-size: 3rem; color: #16a34a; }
+.ready-label { font-size: 1rem; font-weight: 600; color: #16a34a; margin: 0; }
+
+.recorder-controls { display: flex; gap: 0.75rem; justify-content: center; }
+
+.pulse-btn {
+  animation: pulse-anim 1.5s ease-out infinite;
+}
+@keyframes pulse-anim {
+  0%   { box-shadow: 0 0 0 0 rgba(211,47,47,0.5); }
+  70%  { box-shadow: 0 0 0 16px rgba(211,47,47,0); }
+  100% { box-shadow: 0 0 0 0 rgba(211,47,47,0); }
+}
+
+// ── Form & telegram summaries ─────────────────────────────────────────────
+.form-summary,
+.telegram-panel {
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
-  align-items: start;
 }
-.results-main { display: flex; flex-direction: column; gap: 1rem; }
-.results-side { display: flex; flex-direction: column; gap: 1rem; }
+.summary-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 1rem;
+  background: var(--mat-sys-surface-container-lowest);
+  border-radius: 10px;
+  border: 1px solid var(--mat-sys-outline-variant);
+}
+.summary-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mat-sys-on-surface-variant); }
+.summary-value { font-size: 0.9rem; color: var(--mat-sys-on-surface); }
+.chip-set-inline { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem; }
+.mini-chip {
+  padding: 0.1rem 0.5rem;
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+  border-radius: 99px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.full-field { width: 100%; }
 
-// Card header icons
-.card-icon {
+// ── Alert banners ─────────────────────────────────────────────────────────
+.alert-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  font-size: 0.875rem;
+
+  .material-symbols-outlined { font-size: 1.2rem; flex-shrink: 0; }
+
+  &.info {
+    background: var(--mat-sys-secondary-container);
+    color: var(--mat-sys-on-secondary-container);
+  }
+  &.error {
+    background: var(--mat-sys-error-container);
+    color: var(--mat-sys-on-error-container);
+  }
+}
+
+// ── Pipeline tracker ──────────────────────────────────────────────────────
+.top-bar { border-radius: 4px; margin-bottom: 1rem; }
+
+.pipeline-track {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.pipeline-node {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  border-left: 3px solid var(--mat-sys-outline-variant);
+  margin-left: 1rem;
+  position: relative;
+  transition: border-color 0.3s;
+
+  &.done   { border-left-color: #16a34a; }
+  &.active { border-left-color: var(--mat-sys-primary); }
+}
+.node-dot {
+  position: absolute;
+  left: -0.75rem;
+  width: 24px;
+  height: 24px;
+  background: var(--mat-sys-surface);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.5rem;
+}
+.node-icon {
+  font-size: 1.4rem;
+  &.done    { color: #16a34a; }
+  &.pending { color: var(--mat-sys-outline); }
+}
+.node-spinner { flex-shrink: 0; }
+.node-info { display: flex; flex-direction: column; gap: 0.1rem; padding-left: 0.25rem; }
+.node-label  { font-size: 0.9rem; font-weight: 600; color: var(--mat-sys-on-surface); }
+.node-status {
+  font-size: 0.75rem;
+  color: var(--mat-sys-primary);
+  &.done { color: #16a34a; }
+}
+.session-ref {
+  font-size: 0.8rem;
+  color: var(--mat-sys-on-surface-variant);
+  margin: 0;
+  code {
+    background: var(--mat-sys-surface-container);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-family: monospace;
+  }
+}
+
+// ── Result cards ──────────────────────────────────────────────────────────
+.triage-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border: 2px solid;
+  border-radius: 14px;
+  flex-wrap: wrap;
+}
+.triage-icon  { font-size: 2.5rem; flex-shrink: 0; }
+.triage-info  { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; }
+.triage-color { font-size: 1.2rem; font-weight: 800; letter-spacing: 0.04em; }
+.triage-syndrome { font-size: 0.9rem; color: var(--mat-sys-on-surface-variant); text-transform: capitalize; }
+.triage-meta  { display: flex; gap: 1.5rem; }
+.meta-item    { display: flex; flex-direction: column; gap: 0.1rem; }
+.meta-label   { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--mat-sys-on-surface-variant); }
+.meta-val     { font-size: 0.95rem; font-weight: 700; color: var(--mat-sys-on-surface); }
+
+.result-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.result-card { }
+.span-full   { grid-column: 1 / -1; }
+
+.card-lead-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
   color: var(--mat-sys-primary);
   background: var(--mat-sys-primary-container);
   border-radius: 50%;
   width: 40px;
   height: 40px;
 }
-.warning-icon { color: #f59e0b !important; background: #fef3c7 !important; }
-
-// Protocol list
-.protocol-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-.protocol-list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.35rem;
-  font-size: 0.9rem;
-}
-.list-bullet {
-  font-size: 1.1rem;
-  color: var(--mat-sys-primary);
-  flex-shrink: 0;
-  margin-top: 1px;
+.warn-icon {
+  color: #f59e0b !important;
+  background: #fef3c7 !important;
 }
 
-// Vitals grid
-.vitals-grid {
+.vitals-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 0.75rem;
 }
-.vital-item {
+.vital {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.2rem;
-  padding: 0.75rem 0.5rem;
+  gap: 0.15rem;
+  padding: 0.6rem 0.4rem;
   background: var(--mat-sys-surface-container-lowest);
-  border-radius: 12px;
+  border-radius: 10px;
   text-align: center;
 }
-.vital-icon {
-  font-size: 1.4rem;
-  color: var(--mat-sys-primary);
+.vl { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--mat-sys-on-surface-variant); font-weight: 700; }
+.vv { font-size: 0.95rem; font-weight: 700; color: var(--mat-sys-on-surface); }
+
+.action-list {
+  padding-left: 1.25rem;
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.8;
+  color: var(--mat-sys-on-surface);
 }
 
-// Clarification card
-.clarification-card {
-  border-color: #f59e0b !important;
-  border-width: 2px !important;
+// ── Gate & clarification ──────────────────────────────────────────────────
+.gate-card {
+  border: 2px solid #f59e0b !important;
 }
-.clarification-list {
+.gate-info {
+  font-size: 0.875rem;
+  color: var(--mat-sys-on-surface-variant);
+  margin-bottom: 1rem;
+}
+.gate-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+.clarification-card { border: 2px solid #f59e0b !important; }
+.clarification-questions {
+  margin: 0 0 1rem;
   padding-left: 1.25rem;
-  margin: 0 0 0.75rem;
   font-size: 0.9rem;
   line-height: 1.7;
 }
+.clarify-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.flex-field { flex: 1; }
 
+// ── Empty result state ────────────────────────────────────────────────────
+.result-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 3rem 2rem;
+  color: var(--mat-sys-on-surface-variant);
+  text-align: center;
+}
+.empty-icon { font-size: 3rem; }
+
+// ── Step actions ──────────────────────────────────────────────────────────
+.step-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  padding-top: 0.5rem;
+}
+
+// ── Result footer ─────────────────────────────────────────────────────────
 .result-footer {
   display: flex;
   justify-content: flex-end;
   padding-top: 0.5rem;
 }
 
-// ── Intake card & tabs ─────────────────────────────────────────────────────
-.intake-card { overflow: hidden; }
-.intake-tabs { width: 100%; }
-
-.tab-content {
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-.tab-subtitle { color: var(--mat-sys-on-surface-variant); }
-.tab-icon {
-  font-size: 1.2rem;
-  margin-right: 0.35rem;
-  vertical-align: middle;
-}
-
-// ── Voice recorder ─────────────────────────────────────────────────────────
-.recorder-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
-  padding: 2.5rem 1.5rem;
-  background: var(--mat-sys-surface-container-lowest);
-  border-radius: 16px;
-  text-align: center;
-}
-
-// Wave animation
-.wave-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-}
-.wave-bars {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 52px;
-}
-.wave-bar {
-  width: 6px;
-  border-radius: 3px;
-  background: var(--mat-sys-primary);
-  animation: wave 0.9s ease-in-out infinite alternate;
-  height: 12px;
-  &:nth-child(1) { animation-delay: 0s;    height: 14px; }
-  &:nth-child(2) { animation-delay: 0.1s;  height: 28px; }
-  &:nth-child(3) { animation-delay: 0.2s;  height: 42px; }
-  &:nth-child(4) { animation-delay: 0.3s;  height: 52px; }
-  &:nth-child(5) { animation-delay: 0.2s;  height: 42px; }
-  &:nth-child(6) { animation-delay: 0.1s;  height: 28px; }
-  &:nth-child(7) { animation-delay: 0s;    height: 14px; }
-}
-@keyframes wave {
-  from { transform: scaleY(0.3); opacity: 0.5; }
-  to   { transform: scaleY(1);   opacity: 1; }
-}
-
-.timer {
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: var(--mat-sys-primary);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.05em;
-  margin: 0;
-}
-
-.recorder-idle {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-}
-.mic-idle-icon {
-  font-size: 3.5rem;
-  color: var(--mat-sys-outline);
-}
-.audio-ready-icon {
-  font-size: 3rem;
-  color: #16a34a;
-}
-.audio-ready-text { color: #16a34a; font-weight: 600; }
-
-.recorder-controls {
-  display: flex;
-  justify-content: center;
-}
-.audio-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
-
-// Pulsing record button
-.pulsing-btn {
-  animation: pulse 1.5s ease-out infinite;
-}
-@keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(var(--mat-sys-error-rgb, 211,47,47), 0.5); }
-  70%  { box-shadow: 0 0 0 16px rgba(var(--mat-sys-error-rgb, 211,47,47), 0); }
-  100% { box-shadow: 0 0 0 0 rgba(var(--mat-sys-error-rgb, 211,47,47), 0); }
-}
-
-// ── Clinical form ──────────────────────────────────────────────────────────
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.5rem 1rem;
-}
-.full-width { grid-column: 1 / -1; }
-
-.symptom-field { display: flex; flex-direction: column; gap: 0.5rem; }
-.symptom-input { width: 100%; }
-.symptom-chips { flex-wrap: wrap; gap: 0.4rem; }
-
-// ── Telegram form ──────────────────────────────────────────────────────────
-.telegram-form { display: flex; flex-direction: column; gap: 0.5rem; }
-
-// ── Info / warning banners ─────────────────────────────────────────────────
-.info-banner {
-  background: var(--mat-sys-secondary-container) !important;
-  --mdc-elevated-card-container-color: var(--mat-sys-secondary-container);
-}
-.info-banner-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-}
-.info-icon { color: var(--mat-sys-on-secondary-container); flex-shrink: 0; }
-
-.warning-banner {
-  background: var(--mat-sys-error-container) !important;
-  --mdc-elevated-card-container-color: var(--mat-sys-error-container);
-  mat-card-content {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--mat-sys-on-error-container);
-  }
-}
-
-// ── Shared helpers ─────────────────────────────────────────────────────────
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 0.5rem;
-}
-.full-width { width: 100%; }
-.mt-2 { margin-top: 0.5rem; }
-
-.btn-icon {
-  font-size: 1.1rem;
-  vertical-align: middle;
-  margin-right: 4px;
-}
-.inline-spinner {
-  display: inline-block;
-  vertical-align: middle;
-  margin-right: 6px;
-}
-
-// ── Snackbar error override ────────────────────────────────────────────────
-// Applied via MatSnackBar panelClass
-:host ::ng-deep .snack-error {
-  --mdc-snackbar-container-color: var(--mat-sys-error-container);
-  --mdc-snackbar-supporting-text-color: var(--mat-sys-on-error-container);
+// ── Shared helpers ────────────────────────────────────────────────────────
+.muted-text    { color: var(--mat-sys-on-surface-variant); font-size: 0.875rem; margin: 0; }
+.btn-icon      { font-size: 1.1rem; vertical-align: middle; margin-right: 4px; }
+.inline-spinner { display: inline-block; vertical-align: middle; margin-right: 6px; }
+.spin          { animation: spin 1.5s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 // ── Responsive ────────────────────────────────────────────────────────────
-@media (max-width: 768px) {
-  .results-grid { grid-template-columns: 1fr; }
-  .form-grid    { grid-template-columns: 1fr; }
-  .triage-row   { gap: 1rem; }
+@media (max-width: 700px) {
+  .role-cards          { grid-template-columns: 1fr; }
+  .credential-grid     { grid-template-columns: 1fr; }
+  .form-grid           { grid-template-columns: 1fr; }
+  .result-grid         { grid-template-columns: 1fr; }
+  .vitals-row          { grid-template-columns: 1fr 1fr; }
+  .triage-banner       { flex-wrap: wrap; }
+  .gate-actions        { flex-direction: column; }
+  .clarify-row         { flex-direction: column; }
+  .mode-tabs           { flex-wrap: wrap; }
 }

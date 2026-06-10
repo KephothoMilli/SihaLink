@@ -1915,8 +1915,8 @@ async def swarm_status():
             "status": "ok" if bool(os.getenv("TELEGRAM_BOT_TOKEN")) else "degraded"
         },
         "surveillance": {"status": "ok" if data_agent.connected else "degraded"},
-        "language": {
-            "status": "ok" if bool(os.getenv("GEMINI_API_KEY")) else "degraded"
+        "contact_tracing": {
+            "status": "ok" if data_agent.connected else "degraded"
         },
     }
     return base

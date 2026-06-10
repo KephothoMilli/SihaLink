@@ -1,18 +1,41 @@
 /**
- * Encounters Component
+ * Encounters Component — Material Table with server-side pagination
  *
- * Shows both:
- *   1. Live in-memory sessions (from RootAgentService state machine)
- *   2. Persisted encounters from MongoDB Atlas (via GET /encounters)
- *
- * Each card has a "View Details" button that expands an inline detail
- * panel showing full clinical data, geo enrichment, vitals, and facilities.
+ * Uses MatTable + MatPaginator backed by GET /encounters.
+ * All records (seeded or live) are treated as real clinical encounter data.
+ * Expandable detail row shows full clinical, vitals, geo, and facilities data.
  */
 
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  ViewChild,
+  AfterViewInit,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Observable, Subscription } from 'rxjs';
+import { Subscription } from 'rxjs';
+
+// Angular Material
+import { MatTableModule, MatTableDataSource } from '@angular/material/table';
+import {
+  MatPaginatorModule,
+  MatPaginator,
+  PageEvent,
+} from '@angular/material/paginator';
+import { MatSortModule, MatSort } from '@angular/material/sort';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { MatChipsModule } from '@angular/material/chips';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatCardModule } from '@angular/material/card';
+import { MatBadgeModule } from '@angular/material/badge';
+
 import { RootAgentService } from '../../services/root-agent.service';
 import { ApiService } from '../../services/api.service';
 
@@ -21,33 +44,62 @@ import { ApiService } from '../../services/api.service';
   templateUrl: './encounters.component.html',
   styleUrl: './encounters.component.css',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [
+    CommonModule,
+    FormsModule,
+    MatTableModule,
+    MatPaginatorModule,
+    MatSortModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatSelectModule,
+    MatButtonModule,
+    MatIconModule,
+    MatChipsModule,
+    MatProgressBarModule,
+    MatTooltipModule,
+    MatCardModule,
+    MatBadgeModule,
+  ],
 })
-export class EncountersComponent implements OnInit, OnDestroy {
-  // ── Live sessions (in-memory state machine) ───────────────────
-  liveSessions: any[] = [];
-  sessionUpdates$!: Observable<any>;
+export class EncountersComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild(MatPaginator) paginator!: MatPaginator;
+  @ViewChild(MatSort) sort!: MatSort;
 
-  // ── Persisted encounters from MongoDB ─────────────────────────
-  persistedEncounters: any[] = [];
-  persistedTotal = 0;
-  persistedLoading = false;
-  persistedError: string | null = null;
+  // ── Table ─────────────────────────────────────────────────────
+  dataSource = new MatTableDataSource<any>([]);
+  displayedColumns = [
+    'triage',
+    'syndrome',
+    'complaint',
+    'location',
+    'patient',
+    'chw',
+    'timestamp',
+    'expand',
+  ];
+  totalRecords = 0;
+  loading = false;
+  error: string | null = null;
 
-  // ── Inline detail panel ───────────────────────────────────────
-  expandedEncounterId: string | null = null;
-  detailEncounter: any = null;
-  detailLoading = false;
-  detailError: string | null = null;
+  // ── Pagination ────────────────────────────────────────────────
+  pageSize = 20;
+  pageIndex = 0;
+  readonly pageSizeOptions = [10, 20, 50, 100];
 
   // ── Filters ───────────────────────────────────────────────────
   filterCounty = '';
   filterSyndrome = '';
   filterTriage = '';
-  filterLimit = 50;
 
-  // ── View toggle ───────────────────────────────────────────────
-  activeView: 'live' | 'persisted' = 'persisted';
+  // ── Expandable row ────────────────────────────────────────────
+  expandedRow: any = null;
+  detailEncounter: any = null;
+  detailLoading = false;
+
+  // ── Live sessions tab ─────────────────────────────────────────
+  liveSessions: any[] = [];
+  activeTab = 0;
 
   private _subs: Subscription[] = [];
 
@@ -57,12 +109,20 @@ export class EncountersComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit() {
-    this.sessionUpdates$ = this.rootAgent.sessionUpdates$;
     this.loadLiveSessions();
     this._subs.push(
-      this.sessionUpdates$.subscribe(() => this.loadLiveSessions()),
+      this.rootAgent.sessionUpdates$.subscribe(() => this.loadLiveSessions()),
     );
-    this.loadPersistedEncounters();
+    this.loadEncounters();
+  }
+
+  ngAfterViewInit() {
+    this._subs.push(
+      this.sort.sortChange.subscribe(() => {
+        this.pageIndex = 0;
+        this.loadEncounters();
+      }),
+    );
   }
 
   ngOnDestroy() {
@@ -75,16 +135,16 @@ export class EncountersComponent implements OnInit, OnDestroy {
     this.liveSessions = this.rootAgent.getActiveSessions();
   }
 
-  clearSession(sessionId: string) {
-    this.rootAgent.clearSession(sessionId);
+  clearSession(id: string) {
+    this.rootAgent.clearSession(id);
     this.loadLiveSessions();
   }
 
-  // ── Persisted encounters from MongoDB ─────────────────────────
+  // ── Server-side load ───────────────────────────────────────────
 
-  async loadPersistedEncounters() {
-    this.persistedLoading = true;
-    this.persistedError = null;
+  async loadEncounters() {
+    this.loading = true;
+    this.error = null;
     try {
       const params: string[] = [];
       if (this.filterCounty)
@@ -93,92 +153,72 @@ export class EncountersComponent implements OnInit, OnDestroy {
         params.push(`syndrome=${encodeURIComponent(this.filterSyndrome)}`);
       if (this.filterTriage)
         params.push(`triage=${encodeURIComponent(this.filterTriage)}`);
-      params.push(`limit=${this.filterLimit}`);
+      params.push(`limit=${this.pageSize}`);
+      params.push(`skip=${this.pageIndex * this.pageSize}`);
 
       const qs = params.length ? '?' + params.join('&') : '';
       const res: any = await this.api.get(`/encounters${qs}`);
-      this.persistedEncounters = res.encounters ?? [];
-      this.persistedTotal = res.count ?? 0;
+      this.dataSource.data = res.encounters ?? [];
+      this.totalRecords = res.count ?? 0;
     } catch (err) {
-      this.persistedError =
-        err instanceof Error ? err.message : 'Failed to load encounters';
+      this.error =
+        err instanceof Error ? err.message : 'Could not reach the backend';
+      this.dataSource.data = [];
+      this.totalRecords = 0;
     } finally {
-      this.persistedLoading = false;
+      this.loading = false;
     }
+  }
+
+  onPageChange(e: PageEvent) {
+    this.pageSize = e.pageSize;
+    this.pageIndex = e.pageIndex;
+    this.expandedRow = null;
+    this.loadEncounters();
   }
 
   applyFilters() {
-    this.expandedEncounterId = null;
-    this.detailEncounter = null;
-    this.loadPersistedEncounters();
+    this.pageIndex = 0;
+    this.expandedRow = null;
+    this.loadEncounters();
   }
 
   clearFilters() {
-    this.filterCounty = '';
-    this.filterSyndrome = '';
-    this.filterTriage = '';
-    this.expandedEncounterId = null;
-    this.detailEncounter = null;
-    this.loadPersistedEncounters();
+    this.filterCounty = this.filterSyndrome = this.filterTriage = '';
+    this.pageIndex = 0;
+    this.expandedRow = null;
+    this.loadEncounters();
   }
 
-  // ── View Details toggle ────────────────────────────────────────
+  // ── Row expansion ──────────────────────────────────────────────
 
-  async toggleDetail(enc: any) {
-    const id = enc.encounter_id;
-    // Collapse if already open
-    if (this.expandedEncounterId === id) {
-      this.expandedEncounterId = null;
+  async toggleRow(row: any) {
+    if (this.expandedRow === row) {
+      this.expandedRow = null;
       this.detailEncounter = null;
-      this.detailError = null;
       return;
     }
-
-    this.expandedEncounterId = id;
+    this.expandedRow = row;
     this.detailEncounter = null;
-    this.detailError = null;
     this.detailLoading = true;
-
     try {
-      // Try fetching full detail — falls back to the list card data on error
-      const detail: any = await this.api.get(
-        `/encounters/${encodeURIComponent(id)}`,
+      this.detailEncounter = await this.api.get(
+        `/encounters/${encodeURIComponent(row.encounter_id)}`,
       );
-      this.detailEncounter = detail;
     } catch {
-      // Backend may not have the individual route yet — show what we have
-      this.detailEncounter = enc;
-      this.detailError = null; // silent fallback — show the card data
+      this.detailEncounter = row;
     } finally {
       this.detailLoading = false;
     }
   }
 
-  isExpanded(enc: any): boolean {
-    return this.expandedEncounterId === enc.encounter_id;
+  isExpanded(row: any) {
+    return this.expandedRow === row;
   }
 
   // ── Helpers ───────────────────────────────────────────────────
 
-  getStateColor(state: string): string {
-    switch (state) {
-      case 'COMPLETE':
-        return '#4caf50';
-      case 'FAILED':
-        return '#f44336';
-      case 'DECISION_GATE':
-        return '#ff9800';
-      case 'EXTRACTING':
-      case 'GEOCODING':
-      case 'STORING':
-      case 'NOTIFYING':
-        return '#2196f3';
-      default:
-        return '#757575';
-    }
-  }
-
-  triageColor(t: string): string {
+  triageColor(t?: string) {
     switch (t) {
       case 'RED':
         return '#d32f2f';
@@ -187,27 +227,30 @@ export class EncountersComponent implements OnInit, OnDestroy {
       case 'GREEN':
         return '#388e3c';
       default:
-        return '#757575';
+        return '#9e9e9e';
+    }
+  }
+  triageBg(t?: string) {
+    return this.triageColor(t) + '18';
+  }
+
+  getStateColor(s: string) {
+    switch (s) {
+      case 'COMPLETE':
+        return '#388e3c';
+      case 'FAILED':
+        return '#d32f2f';
+      case 'DECISION_GATE':
+        return '#f57c00';
+      default:
+        return '#1976d2';
     }
   }
 
-  formatSyndrome(s: string): string {
+  formatSyndrome(s?: string) {
     return (s || '').replace(/_/g, ' ');
   }
-
-  facilityEta(mins: number): string {
-    if (!mins) return '—';
-    return mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} hr`;
-  }
-
-  vitalsText(vitals: any): string {
-    if (!vitals) return '—';
-    const parts: string[] = [];
-    if (vitals.temperature) parts.push(`Temp ${vitals.temperature}°C`);
-    if (vitals.blood_pressure) parts.push(`BP ${vitals.blood_pressure}`);
-    if (vitals.pulse) parts.push(`Pulse ${vitals.pulse}`);
-    if (vitals.spo2) parts.push(`SpO₂ ${vitals.spo2}%`);
-    if (vitals.respiratory_rate) parts.push(`RR ${vitals.respiratory_rate}`);
-    return parts.length ? parts.join(' · ') : '—';
+  facilityEta(m: number) {
+    return !m ? '—' : m < 60 ? `${m} min` : `${(m / 60).toFixed(1)} hr`;
   }
 }
