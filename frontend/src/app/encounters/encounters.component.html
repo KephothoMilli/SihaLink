@@ -119,8 +119,13 @@
       <ng-container matColumnDef="patient">
         <th mat-header-cell *matHeaderCellDef>Patient</th>
         <td mat-cell *matCellDef="let row">
-          {{ row.extracted?.age?.value }}{{ row.extracted?.age?.unit ? ' '+row.extracted.age.unit : '' }}
-          {{ row.extracted?.sex ? '· '+row.extracted.sex : '' }}
+          <div class="patient-cell">
+            <div class="patient-name">{{ row.patient_details?.name || 'Unknown' }}</div>
+            <div class="patient-meta">
+              {{ row.patient_details?.age?.value || row.extracted?.age?.value || '—' }}{{ (row.patient_details?.age?.unit || row.extracted?.age?.unit) ? ' ' + (row.patient_details?.age?.unit || row.extracted?.age?.unit) : '' }}
+              {{ (row.patient_details?.sex || row.extracted?.sex) ? '· ' + (row.patient_details?.sex || row.extracted?.sex) : '' }}
+            </div>
+          </div>
         </td>
       </ng-container>
 
@@ -202,8 +207,10 @@
                 <div class="detail-section">
                   <p class="section-title">💗 Vitals</p>
                   <dl class="detail-list">
+                    <dt>Name</dt>
+                    <dd>{{ detailEncounter.patient_details?.name || '—' }}</dd>
                     <dt>Age</dt>
-                    <dd>{{ detailEncounter.extracted?.age?.value }} {{ detailEncounter.extracted?.age?.unit || '' }}
+                    <dd>{{ detailEncounter.patient_details?.age?.value || detailEncounter.extracted?.age?.value || '—' }} {{ detailEncounter.patient_details?.age?.unit || detailEncounter.extracted?.age?.unit || '' }}
                     </dd>
                     <dt>Sex</dt>
                     <dd>{{ detailEncounter.extracted?.sex || '—' }}</dd>

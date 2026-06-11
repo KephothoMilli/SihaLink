@@ -267,13 +267,25 @@ foreach ($s in $OptionalSecrets) {
 $adkAvailable = Get-Command adk -ErrorAction SilentlyContinue
 if ($adkAvailable) {
     try {
-        adk deploy cloud_run `
+        # Capture ADK deploy output to extract the service URL
+        $adkOutput = adk deploy cloud_run `
             --project=$ProjectId `
             --region=$Region `
             --service_name=$AgentName `
             agents/orchestrator `
-            -- --service-account=$SaEmail
+            -- --service-account=$SaEmail 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "ADK exit code $LASTEXITCODE" }
         Ok "Deployed via ADK CLI"
+
+        # Try to extract service URL from ADK output (ADK prints it in stdout)
+        $adkUrlLine = $adkOutput | Select-String -Pattern "https://[a-z0-9\-]+\.run\.app" | Select-Object -First 1
+        if ($adkUrlLine) {
+            $matches = [regex]::Match($adkUrlLine.Line, "https://[a-z0-9\-\.]+\.run\.app[^\s]*")
+            if ($matches.Success) {
+                $script:AdkDeployedUrl = $matches.Value.TrimEnd('/')
+                Ok "Extracted ADK service URL: $($script:AdkDeployedUrl)"
+            }
+        }
     } catch {
         Warn "ADK deploy failed — falling back to Cloud Run"
         $adkAvailable = $null
@@ -303,9 +315,39 @@ if (-not $adkAvailable) {
     Ok "Deployed to Cloud Run"
 }
 
-$AgentUrl = (gcloud run services describe $AgentName `
-    --region=$Region --format="value(status.url)" 2>$null) ?? `
-    "https://$Region-$ProjectId.run.app"
+$AgentUrl = $null
+
+# Strategy 1: URL extracted from ADK output
+if ($script:AdkDeployedUrl) {
+    $AgentUrl = $script:AdkDeployedUrl
+    Ok "Using ADK-reported URL: $AgentUrl"
+}
+
+# Strategy 2: Query the service by known name
+if (-not $AgentUrl) {
+    $AgentUrl = (gcloud run services describe $AgentName `
+        --region=$Region --format="value(status.url)" 2>$null)
+    if ($AgentUrl) { Ok "Found service by name '$AgentName': $AgentUrl" }
+}
+
+# Strategy 3: List all Cloud Run services and find the most recent one
+if (-not $AgentUrl) {
+    Write-Host "  Searching Cloud Run services for deployed agent..." -ForegroundColor Gray
+    $services = gcloud run services list --region=$Region --project=$ProjectId `
+        --format="value(metadata.name,status.url)" 2>$null
+    $AgentUrl = ($services | Select-String "sihalink|orchestrator|kephotho" |
+        Select-Object -First 1) -replace ".*\s+(https://\S+)", '$1'
+    if ($AgentUrl) { Ok "Found via service list: $AgentUrl" }
+}
+
+# Strategy 4: Use the URL shown in the deploy output directly
+if (-not $AgentUrl) {
+    $AgentUrl = "https://us-central1-kephothoagenticai.run.app"
+    Warn "Could not detect service URL automatically — using known ADK default: $AgentUrl"
+    Write-Host "  If this is wrong, re-run with the correct URL:" -ForegroundColor Yellow
+    Write-Host "  gcloud run services list --region=$Region --project=$ProjectId" -ForegroundColor Gray
+}
+
 Ok "Agent Runtime URL: $AgentUrl"
 
 # ─────────────────────────────────────────────────────────────────────────────

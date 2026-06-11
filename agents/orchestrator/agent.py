@@ -23,7 +23,7 @@ logger = logging.getLogger("SihaLink-Orchestrator")
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from google.adk.agents import LlmAgent
@@ -1622,6 +1622,31 @@ async def get_recipients():
 @app.post("/tool/register_recipient")
 async def api_register_recipient(payload: Dict[str, Any]):
     return {"status": "ok", "recipient": payload}
+
+
+@app.post("/telegram")
+async def telegram_webhook_relay(request: Request):
+    """Relay incoming Telegram webhook updates to the Notify Agent bot on port 3001."""
+    import httpx
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(
+                f"{NOTIFY_BASE}/telegram",
+                json=body,
+                timeout=10.0
+            )
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code
+            )
+        except Exception as exc:
+            logger.error("Failed to relay Telegram webhook: %s", exc)
+            raise HTTPException(status_code=502, detail="Error relaying to notify agent")
 
 
 @app.get("/notifications/encounter/{encounter_id}")
