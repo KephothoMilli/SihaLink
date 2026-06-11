@@ -39,17 +39,20 @@ export interface TelegramIntakeRequest {
 }
 
 export interface ExtractionResult {
-  symptoms: string[];
-  vitals: {
+  symptoms?: string[];
+  vitals?: {
     temperature?: number;
+    temperature_c?: number;
     blood_pressure?: string;
     heart_rate?: number;
+    pulse?: number;
     respiratory_rate?: number;
+    spo2?: number;
   };
   clinical_assessment?: string;
-  recommended_actions: string[];
-  clarification_questions: string[];
-  confidence_score: number;
+  recommended_actions?: string[];
+  clarification_questions?: string[];
+  confidence_score?: number;
   // extra fields the backend may return
   [key: string]: any;
 }

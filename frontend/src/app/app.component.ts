@@ -263,12 +263,21 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async confirmGate(confirmed: boolean) {
     if (!this.gateSession) return;
+    const sessionId = this.gateSession.sessionId;
+    this.gateSession = null; // close immediately
+
     try {
-      await this.rootAgent.confirmEncounterDecision(
-        this.gateSession.sessionId,
+      const { timedOut } = await this.rootAgent.confirmEncounterDecision(
+        sessionId,
         confirmed,
       );
-      this.gateSession = null;
+      if (timedOut) {
+        this.showToast(
+          'Gate timed out — encounter was auto-processed',
+          'warning',
+          '⏱️',
+        );
+      }
     } catch (error) {
       console.error('Failed to confirm decision gate:', error);
     }

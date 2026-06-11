@@ -248,6 +248,29 @@
 
         </div>
 
+        <!-- GPS Location status bar -->
+        <div class="gps-bar" [class.gps-acquired]="gpsStatus==='acquired'"
+          [class.gps-denied]="gpsStatus==='denied' || gpsStatus==='unavailable'"
+          [class.gps-requesting]="gpsStatus==='requesting'">
+          <span class="material-symbols-outlined gps-icon">{{ gpsIcon }}</span>
+          <div class="gps-text">
+            <span class="gps-label">Device Location</span>
+            <span class="gps-value">{{ gpsLabel }}</span>
+            @if (gpsStatus === 'acquired' && gpsAccuracy) {
+            <span class="gps-accuracy">±{{ gpsAccuracy | number:'1.0-0' }} m</span>
+            }
+          </div>
+          @if (gpsStatus === 'denied' || gpsStatus === 'unavailable' || gpsStatus === 'idle') {
+          <button mat-stroked-button class="gps-retry-btn" (click)="requestGps()">
+            <span class="material-symbols-outlined btn-icon">refresh</span>
+            Retry
+          </button>
+          }
+          @if (gpsStatus === 'requesting') {
+          <mat-spinner diameter="20" class="gps-spinner"></mat-spinner>
+          }
+        </div>
+
         <div class="step-actions">
           <button mat-stroked-button (click)="stepper.previous()">Back</button>
           <button mat-flat-button color="primary" (click)="advanceToIntake()">
@@ -524,7 +547,7 @@
               <mat-card-title>Symptoms</mat-card-title>
             </mat-card-header>
             <mat-card-content>
-              @if (extractionResult.symptoms.length) {
+              @if (extractionResult.symptoms?.length) {
               <mat-chip-set>
                 @for (s of extractionResult.symptoms; track s) {
                 <mat-chip>{{ s }}</mat-chip>
@@ -555,29 +578,29 @@
                 </div>
                 <div class="vital">
                   <span class="vl">Temp</span>
-                  <span class="vv">{{ extractionResult.vitals.temperature ? extractionResult.vitals.temperature + '°C' :
-                    '—' }}</span>
+                  <span class="vv">{{ extractionResult.vitals?.temperature ? (extractionResult.vitals?.temperature +
+                    '°C') : '—' }}</span>
                 </div>
                 <div class="vital">
                   <span class="vl">Resp</span>
-                  <span class="vv">{{ extractionResult.vitals.respiratory_rate ?
-                    extractionResult.vitals.respiratory_rate + '/min' : '—' }}</span>
+                  <span class="vv">{{ extractionResult.vitals?.respiratory_rate ?
+                    (extractionResult.vitals?.respiratory_rate + '/min') : '—' }}</span>
                 </div>
                 <div class="vital">
                   <span class="vl">HR</span>
-                  <span class="vv">{{ extractionResult.vitals.heart_rate ? extractionResult.vitals.heart_rate + ' bpm' :
-                    '—' }}</span>
+                  <span class="vv">{{ extractionResult.vitals?.heart_rate ? (extractionResult.vitals?.heart_rate + '
+                    bpm') : '—' }}</span>
                 </div>
                 <div class="vital">
                   <span class="vl">BP</span>
-                  <span class="vv">{{ extractionResult.vitals.blood_pressure || '—' }}</span>
+                  <span class="vv">{{ extractionResult.vitals?.blood_pressure || '—' }}</span>
                 </div>
               </div>
             </mat-card-content>
           </mat-card>
 
           <!-- Recommended actions -->
-          @if (extractionResult.recommended_actions.length) {
+          @if (extractionResult.recommended_actions?.length) {
           <mat-card appearance="outlined" class="result-card span-full">
             <mat-card-header>
               <span class="material-symbols-outlined card-lead-icon" mat-card-avatar>bolt</span>
@@ -639,7 +662,7 @@
         }
 
         <!-- Clarification -->
-        @if (extractionResult.clarification_questions.length) {
+        @if (extractionResult.clarification_questions?.length) {
         <mat-card appearance="outlined" class="clarification-card">
           <mat-card-header>
             <span class="material-symbols-outlined card-lead-icon warn-icon" mat-card-avatar>help</span>

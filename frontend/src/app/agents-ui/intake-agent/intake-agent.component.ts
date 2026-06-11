@@ -2,6 +2,7 @@
  * Intake Agent Component — Swarm Workflow Stepper
  *
  * Gate-protected clinical intake portal for qualified CHWs and Clinicians.
+ * Captures device GPS coordinates for precise geo-enrichment.
  *
  * Workflow (mirrors APP_WORKFLOW.md encounter pipeline):
  *   Step 0 — Identity Verification  (CHW/Clinician credential check)
@@ -18,7 +19,7 @@ import {
   ViewChild,
   ChangeDetectorRef,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, DecimalPipe } from '@angular/common';
 import {
   FormsModule,
   ReactiveFormsModule,
@@ -129,6 +130,7 @@ const WHO_SYNDROMES = [
   standalone: true,
   imports: [
     CommonModule,
+    DecimalPipe,
     FormsModule,
     ReactiveFormsModule,
     MatStepperModule,
@@ -202,6 +204,14 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
   clarifying = false;
   gateSession: any = null;
 
+  // ── GPS / Location ─────────────────────────────────────────────────────
+  gpsLat: number = 0;
+  gpsLng: number = 0;
+  gpsAccuracy: number | null = null;
+  gpsStatus: 'idle' | 'requesting' | 'acquired' | 'denied' | 'unavailable' =
+    'idle';
+  gpsAddress: string = ''; // reverse-geocoded human label (best-effort)
+
   private destroy$ = new Subject<void>();
 
   constructor(
@@ -220,6 +230,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     this._setupMemorySync();
     this._setupAudioRecording();
     this._subscribeToSessionUpdates();
+    this._requestGps(); // request immediately so location is ready by the time pipeline runs
   }
 
   ngOnDestroy() {
@@ -265,7 +276,7 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
       patientForm: this.patientForm.value,
       symptoms: this.symptoms,
       intakeMode: this.intakeMode,
-      telegramText: this.telegramText
+      telegramText: this.telegramText,
     };
     localStorage.setItem('siha_intake_memory', JSON.stringify(mem));
   }
@@ -276,21 +287,30 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     if (!stored) return;
     try {
       const mem = JSON.parse(stored);
-      if (mem.identityForm) this.identityForm.patchValue(mem.identityForm, { emitEvent: false });
+      if (mem.identityForm)
+        this.identityForm.patchValue(mem.identityForm, { emitEvent: false });
       if (mem.role) {
         this.role = mem.role as UserRole;
         // setRole logic
         if (this.role === 'clinician') {
-          this.identityForm.get('chw_id')?.setValidators([Validators.required, Validators.pattern(/^(CHW|DOC|NRS|CL)-[A-Z0-9]+$/i)]);
+          this.identityForm
+            .get('chw_id')
+            ?.setValidators([
+              Validators.required,
+              Validators.pattern(/^(CHW|DOC|NRS|CL)-[A-Z0-9]+$/i),
+            ]);
         }
-        this.identityForm.get('chw_id')?.updateValueAndValidity({ emitEvent: false });
+        this.identityForm
+          .get('chw_id')
+          ?.updateValueAndValidity({ emitEvent: false });
       }
       if (mem.identityVerified) this.identityVerified = mem.identityVerified;
-      if (mem.patientForm) this.patientForm.patchValue(mem.patientForm, { emitEvent: false });
+      if (mem.patientForm)
+        this.patientForm.patchValue(mem.patientForm, { emitEvent: false });
       if (mem.symptoms) this.symptoms = mem.symptoms;
       if (mem.intakeMode) this.intakeMode = mem.intakeMode;
       if (mem.telegramText) this.telegramText = mem.telegramText;
-      
+
       // Auto-advance stepper to Step 1 if identity was already verified
       if (this.identityVerified) {
         setTimeout(() => this.stepper?.next(), 300);
@@ -301,8 +321,12 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
   }
 
   private _setupMemorySync() {
-    this.identityForm.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(() => this._saveMemory());
-    this.patientForm.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(() => this._saveMemory());
+    this.identityForm.valueChanges
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => this._saveMemory());
+    this.patientForm.valueChanges
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => this._saveMemory());
   }
 
   // ── Step 0 — Identity verification ────────────────────────────────────
@@ -458,6 +482,93 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ── GPS capture ────────────────────────────────────────────────────────
+
+  /** Request browser geolocation. Called on init and on user tap of the location button. */
+  requestGps() {
+    this._requestGps();
+  }
+
+  private _requestGps() {
+    if (!navigator.geolocation) {
+      this.gpsStatus = 'unavailable';
+      return;
+    }
+    this.gpsStatus = 'requesting';
+    this.cd.markForCheck();
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.gpsLat = pos.coords.latitude;
+        this.gpsLng = pos.coords.longitude;
+        this.gpsAccuracy = pos.coords.accuracy;
+        this.gpsStatus = 'acquired';
+        this._reverseGeocode(this.gpsLat, this.gpsLng);
+        this.cd.markForCheck();
+      },
+      (err) => {
+        this.gpsStatus = err.code === 1 ? 'denied' : 'unavailable';
+        this.cd.markForCheck();
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 },
+    );
+  }
+
+  /** Best-effort reverse geocode using the Geo Agent endpoint (no extra key needed). */
+  private async _reverseGeocode(lat: number, lng: number) {
+    try {
+      const res: any = await this.api.post('/tool/get_admin_hierarchy', {
+        lat,
+        lng,
+      });
+      const h = res?.admin_hierarchy;
+      if (h) {
+        const parts = [h.ward, h.sub_county, h.county].filter(Boolean);
+        this.gpsAddress = parts.join(', ');
+        // Pre-fill county on the patient form if it's empty
+        if (h.county && !this.patientForm.get('county')?.value) {
+          this.patientForm.patchValue({ county: h.county });
+        }
+        this.cd.markForCheck();
+      }
+    } catch {
+      // non-fatal — address label is optional
+    }
+  }
+
+  get gpsLabel(): string {
+    switch (this.gpsStatus) {
+      case 'requesting':
+        return 'Acquiring location…';
+      case 'acquired':
+        return (
+          this.gpsAddress ||
+          `${this.gpsLat.toFixed(5)}, ${this.gpsLng.toFixed(5)}`
+        );
+      case 'denied':
+        return 'Location access denied';
+      case 'unavailable':
+        return 'GPS unavailable';
+      default:
+        return 'Location not captured';
+    }
+  }
+
+  get gpsIcon(): string {
+    switch (this.gpsStatus) {
+      case 'requesting':
+        return 'my_location';
+      case 'acquired':
+        return 'location_on';
+      case 'denied':
+        return 'location_off';
+      case 'unavailable':
+        return 'location_disabled';
+      default:
+        return 'location_searching';
+    }
+  }
+
   // ── Step 2 → 3: Start encounter pipeline ──────────────────────────────
 
   async launchPipeline() {
@@ -467,14 +578,14 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
 
     this._initPipelineLog();
 
+    const { chw_id, county: opCounty } = this.identityForm.value;
+    const patient = this.patientForm.value;
+
+    let audio_base64 = '';
+    let form_data: any = null;
+    let telegram_payload: any = null;
+
     try {
-      const { chw_id, county: opCounty } = this.identityForm.value;
-      const patient = this.patientForm.value;
-
-      let audio_base64 = '';
-      let form_data: any = null;
-      let telegram_payload: any = null;
-
       if (this.intakeMode === 'voice' && this.audioBlob) {
         audio_base64 = await this._blobToBase64(this.audioBlob);
       } else if (this.intakeMode === 'form') {
@@ -500,48 +611,60 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
           language_hint: patient.language_hint,
         };
       }
+    } catch (encodeErr) {
+      this.processing = false;
+      this.snack.open('Failed to encode audio', 'Dismiss', { duration: 4000 });
+      return;
+    }
 
-      // Move to step 3 first so user sees the pipeline
-      this.stepper?.next();
+    // Move to step 3 so user sees the pipeline
+    this.stepper?.next();
 
-      // POST to backend — real pipeline kicks off
-      const session = await this.rootAgent.startEncounter({
+    // Fire the pipeline as a non-blocking background task.
+    // The subscription in _subscribeToSessionUpdates drives all state
+    // transitions (DECISION_GATE, COMPLETE, FAILED) via sessionUpdates$.
+    // We only use the returned promise to catch a fatal startup error.
+    this.rootAgent
+      .startEncounter({
         audio_base64,
-        latitude: 0,
-        longitude: 0,
+        latitude: this.gpsLat,
+        longitude: this.gpsLng,
         chw_id,
-        sessionId: this.sessionId,
+        sessionId: this.sessionId!,
         form_data,
         telegram_payload,
-      });
-
-      // Extract result from session data
-      this.extractionResult =
-        (session.data?.extraction as ExtractionResult) ?? null;
-      this._markAllPipelineDone();
-
-      // Force Angular to pick up the result before advancing
-      this.cd.detectChanges();
-
-      // If DECISION_GATE — surface it
-      if (session.state === 'DECISION_GATE') {
-        this.gateSession = session;
-      }
-
-      // Advance to results step
-      setTimeout(() => {
-        this.stepper?.next();
+      })
+      .then((session) => {
+        // Pipeline finished — grab final extraction if subscription missed it
+        if (!this.extractionResult && session.data?.extraction) {
+          this.extractionResult = this._normalizeResult(
+            session.data.extraction as ExtractionResult,
+          );
+          this._markAllPipelineDone();
+        }
+        // Only set gateSession from here if subscription didn't already catch it
+        if (session.state === 'DECISION_GATE' && !this.gateSession) {
+          this.gateSession = session;
+        }
+        this.processing = false;
         this.cd.detectChanges();
-      }, 200);
-    } catch (err) {
-      this.snack.open(
-        err instanceof Error ? err.message : 'Pipeline failed',
-        'Dismiss',
-        { duration: 6000 },
-      );
-    } finally {
-      this.processing = false;
-    }
+        // Advance to results step if not already there
+        if (this.extractionResult) {
+          setTimeout(() => {
+            this.stepper?.next();
+            this.cd.detectChanges();
+          }, 200);
+        }
+      })
+      .catch((err) => {
+        this.processing = false;
+        this.snack.open(
+          err instanceof Error ? err.message : 'Pipeline failed',
+          'Dismiss',
+          { duration: 6000 },
+        );
+        this.cd.detectChanges();
+      });
   }
 
   private _initPipelineLog() {
@@ -595,7 +718,9 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
 
         // Populate result as soon as extraction data arrives — don't wait for COMPLETE
         if (session.data?.extraction && !this.extractionResult) {
-          this.extractionResult = session.data.extraction as ExtractionResult;
+          this.extractionResult = this._normalizeResult(
+            session.data.extraction as ExtractionResult,
+          );
           this._markAllPipelineDone();
           // Auto-advance stepper to the Result step
           setTimeout(() => {
@@ -612,23 +737,37 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
 
   async confirmGate(confirmed: boolean) {
     if (!this.gateSession) return;
+    const sessionId = this.gateSession.sessionId;
+    this.gateSession = null; // close immediately — don't wait for the async call
+
     try {
-      await this.rootAgent.confirmEncounterDecision(
-        this.gateSession.sessionId,
-        confirmed,
-      );
-      this.gateSession = null;
-      this.snack.open(
-        confirmed
-          ? '✅ Referral dispatched to facility'
-          : '❌ Referral declined — encounter logged',
-        'OK',
-        { duration: 5000 },
-      );
+      const { resolved, timedOut } =
+        await this.rootAgent.confirmEncounterDecision(sessionId, confirmed);
+
+      if (timedOut) {
+        // Gate already expired — backend auto-handled it
+        this.snack.open(
+          '⏱️ Gate timed out — the encounter was auto-processed. Check Case Encounters.',
+          'OK',
+          { duration: 7000 },
+        );
+      } else if (confirmed) {
+        this.snack.open('✅ Referral dispatched to facility', 'OK', {
+          duration: 5000,
+        });
+      } else {
+        this.snack.open('❌ Referral declined — encounter logged', 'OK', {
+          duration: 5000,
+        });
+      }
     } catch (err) {
-      this.snack.open('Gate confirmation failed', 'Dismiss', {
-        duration: 4000,
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Gate confirmation error:', msg);
+      this.snack.open(
+        `Gate confirmation failed: ${msg.slice(0, 80)}`,
+        'Dismiss',
+        { duration: 6000 },
+      );
     }
   }
 
@@ -669,11 +808,11 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
     this.clarificationText = '';
     this.identityForm.reset();
     this.patientForm.reset({ age_unit: 'years' });
-    
+
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('siha_intake_memory');
     }
-    
+
     setTimeout(() => this.stepper?.reset(), 100);
   }
 
@@ -683,6 +822,26 @@ export class IntakeAgentComponent implements OnInit, OnDestroy {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
+
+  /** Ensure all array/object fields are present so the template never calls .length on undefined */
+  private _normalizeResult(raw: any): ExtractionResult {
+    return {
+      ...raw,
+      symptoms: Array.isArray(raw?.symptoms)
+        ? raw.symptoms
+        : Array.isArray(raw?.primary_symptoms)
+          ? raw.primary_symptoms
+          : [],
+      recommended_actions: Array.isArray(raw?.recommended_actions)
+        ? raw.recommended_actions
+        : [],
+      clarification_questions: Array.isArray(raw?.clarification_questions)
+        ? raw.clarification_questions
+        : [],
+      vitals: raw?.vitals ?? raw?.vital_signs ?? {},
+      confidence_score: raw?.confidence_score ?? raw?.confidence ?? 0,
+    };
+  }
 
   triageColor(t?: string): string {
     switch (t) {

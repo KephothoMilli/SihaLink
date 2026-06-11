@@ -18,22 +18,13 @@
 
   <!--
     ═══════════════════════════════════════════════════════════════════════
-    Dynatrace Real User Monitoring (RUM) — agentless JS snippet
+    Dynatrace Real User Monitoring (RUM) — configure when ready
     ═══════════════════════════════════════════════════════════════════════
-    HOW TO CONFIGURE:
+    To enable:
       1. In Dynatrace: Digital Experience → Web Applications → + New application
-      2. Copy the JavaScript snippet URL shown on the setup page
-      3. Replace REPLACE_WITH_YOUR_SCRIPT_PATH below with that path
-         Example: /jstag/17a3456abc/1234567890abcdef_complete.js
-
-    The snippet MUST be the first executable script in <head> so Dynatrace
-    hooks XHR and fetch before Angular bootstraps.
-
-    Reference: https://docs.dynatrace.com/docs/observe/digital-experience/
-               web-applications/initial-setup/snippet-formats
-
-    SAFE FALLBACK: If the script fails to load (dev, offline, wrong URL),
-    the inline dtrum stub below prevents any ReferenceError in Angular code.
+      2. Copy the JS snippet URL from the setup page
+      3. Uncomment the <script> tag below and replace the src with your URL
+         Example: https://js-cdn.dynatrace.com/jstag/17a3456abc/1234567890_complete.js
     ═══════════════════════════════════════════════════════════════════════
   -->
 
@@ -50,11 +41,12 @@
     };
   </script>
 
-  <!-- Dynatrace RUM loader — replace path with your tenant's snippet URL -->
-  <script type="text/javascript" src="https://js-cdn.dynatrace.com/jstag/REPLACE_WITH_YOUR_SCRIPT_PATH_complete.js"
+  <!-- Dynatrace RUM loader — uncomment and set src when tenant URL is available
+  <script type="text/javascript" src="https://js-cdn.dynatrace.com/jstag/YOUR_TENANT_PATH_complete.js"
     crossorigin="anonymous"
-    onerror="console.info('[Dynatrace] RUM script unavailable — app running without RUM monitoring')">
-    </script>
+    onerror="console.info('[Dynatrace] RUM script unavailable')">
+  </script>
+  -->
 </head>
 
 <body class="mat-app-background">

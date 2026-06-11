@@ -404,6 +404,7 @@ class Orchestrator:
             "symptoms":     symptoms,
             "encounter_id": data.get("encounter_id", ""),
             "referral_id":  data.get("referral_id", ""),
+            "timeout_seconds": 300,
         }
         logger.info(
             "⏳ DECISION_GATE — session %s | triage=%s | syndrome=%s",
@@ -415,7 +416,7 @@ class Orchestrator:
         self._pending_gates[session_id] = future
 
         triage = data.get("extracted", {}).get("triage_color", "YELLOW")
-        timeout = 60
+        timeout = 300  # 5 minutes — CHW needs time to review before approving
 
         if session_id.startswith("tg-"):
             chat_id = session_id.split("-")[1]

@@ -1289,12 +1289,28 @@ async def get_encounter_status(session_id: str):
 
 @app.post("/encounter/{session_id}/confirm")
 async def confirm_encounter(session_id: str, payload: Dict[str, Any]):
-    """CHV taps Confirm or Decline — resolves the asyncio.Future gate."""
+    """
+    CHV taps Confirm or Decline — resolves the asyncio.Future gate.
+    
+    If the gate already timed out or doesn't exist, returns 200 gracefully
+    so the frontend can always close the gate card without a 404 error.
+    """
     confirmed = payload.get("confirmed", False)
     success = orchestrator.resolve_human_gate(session_id, confirmed)
     if not success:
-        raise HTTPException(status_code=404, detail="No pending gate for this session")
-    return {"session_id": session_id, "confirmed": confirmed}
+        # Gate already resolved (timed out or double-submit) — return gracefully
+        # Check if session exists to give a better message
+        session = orchestrator.sessions.get(session_id, {})
+        state = session.get("state")
+        state_str = state.value if hasattr(state, "value") else str(state) if state else "unknown"
+        return {
+            "session_id": session_id,
+            "confirmed": confirmed,
+            "status": "already_resolved",
+            "session_state": state_str,
+            "note": "Gate was already resolved or timed out — no action needed"
+        }
+    return {"session_id": session_id, "confirmed": confirmed, "status": "resolved"}
 
 
 @app.post("/encounter/{session_id}/clarify")

@@ -47,7 +47,15 @@ export interface EncounterSession {
     mongoStored?: any;
     notifications?: any[];
     surveillanceData?: any;
-    gate_data?: { question?: string; triage_color?: string; summary?: string };
+    gate_data?: {
+      question?: string;
+      triage_color?: string;
+      summary?: string;
+      syndrome?: string;
+      symptoms?: string[];
+      encounter_id?: string;
+      referral_id?: string;
+    };
   };
   timestamp: number;
   error?: string;
@@ -241,22 +249,31 @@ export class RootAgentService {
    * Confirm or decline a human-in-the-loop decision gate.
    * Calls POST /encounter/{sessionId}/confirm on the backend.
    * The backend's asyncio.Future resolves and the pipeline continues.
+   * Returns whether the gate was actively resolved (true) or had already timed out (false).
    */
   async confirmEncounterDecision(
     sessionId: string,
     confirmed: boolean,
-  ): Promise<void> {
+  ): Promise<{ resolved: boolean; timedOut: boolean }> {
+    // POST directly — no local session guard needed.
+    // The backend now returns 200 even if the gate timed out.
+    const result: any = await this.api.post(
+      `/encounter/${encodeURIComponent(sessionId)}/confirm`,
+      { confirmed },
+    );
+
+    const timedOut = result?.status === 'already_resolved';
+
+    // Update local session state optimistically
     const session = this.activeSessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
-
-    await this.api.post(`/encounter/${encodeURIComponent(sessionId)}/confirm`, {
-      confirmed,
-    });
-
-    if (!confirmed) {
-      session.state = 'COMPLETE';
-      this.sessionUpdates.next(session);
+    if (session) {
+      if (!confirmed || timedOut) {
+        session.state = 'COMPLETE';
+        this.sessionUpdates.next({ ...session });
+      }
     }
+
+    return { resolved: !timedOut, timedOut };
   }
 
   /**
