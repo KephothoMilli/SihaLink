@@ -19,16 +19,16 @@ FROM node:20-slim AS notify-build
 WORKDIR /build/notify
 # Copy only dependency manifests first for layer caching
 COPY agents/notify/package.json agents/notify/package-lock.json* ./
-RUN npm ci --omit=dev
+# Install ALL deps (including devDependencies) so tsc/typescript is available at build time
+RUN npm ci
 
 COPY agents/notify/tsconfig.json ./
 COPY agents/notify/bot.ts ./
-# Compile TypeScript; tolerate minor type errors (--skipLibCheck)
-RUN npx tsc --outDir dist --module commonjs --target ES2022 \
-      --esModuleInterop true --skipLibCheck true bot.ts \
-    || true
-# Fallback: copy source for tsx runtime if tsc fails
-RUN [ -f dist/bot.js ] || cp bot.ts dist/bot.ts
+# Compile TypeScript using the project's tsconfig (includes proper lib paths)
+RUN npm run build || true
+# Ensure dist/ exists then check if compilation produced bot.js
+# If tsc failed, copy bot.ts so tsx can run it as a fallback at runtime
+RUN mkdir -p dist && ([ -f dist/bot.js ] || cp bot.ts dist/bot.ts)
 
 # ── Stage 2: Angular frontend build ──────────────────────────────────────────
 FROM node:20-slim AS frontend-build
@@ -73,8 +73,11 @@ COPY data/ ./data/
 COPY pyproject.toml ./
 
 # ── Notify Agent artifacts from Stage 1 ──────────────────────────────────────
-COPY --from=notify-build /build/notify/node_modules ./agents/notify/node_modules
-COPY --from=notify-build /build/notify/dist          ./agents/notify/dist
+# Copy only production node_modules (prune dev deps to keep image lean)
+COPY --from=notify-build /build/notify/node_modules  ./agents/notify/node_modules
+COPY --from=notify-build /build/notify/dist           ./agents/notify/dist
+# Also copy bot.ts in case tsx fallback is needed at runtime
+COPY --from=notify-build /build/notify/bot.ts         ./agents/notify/bot.ts
 
 # ── Frontend static files from Stage 2 ───────────────────────────────────────
 # Served by the FastAPI app via StaticFiles mount at "/"

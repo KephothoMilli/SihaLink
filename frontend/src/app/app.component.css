@@ -227,6 +227,40 @@
   font-size: 0.8rem;
 }
 
+/* Footer Telegram link */
+.footer-tg-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #26a5e4;
+  text-decoration: none;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+.footer-tg-link:hover {
+  opacity: 0.75;
+}
+.footer-tg-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* Sidebar Telegram nav link */
+.nav-telegram {
+  color: #26a5e4 !important;
+  font-weight: 600;
+}
+.nav-telegram:hover {
+  background: rgba(38, 165, 228, 0.08) !important;
+  color: #1a8bbf !important;
+}
+.nav-telegram .nav-icon {
+  display: flex;
+  align-items: center;
+  color: #26a5e4;
+}
+
 /* Glassmorphism Decision Gate Modal */
 .gate-overlay {
   position: fixed;

@@ -50,7 +50,68 @@
 </head>
 
 <body class="mat-app-background">
-  <app-root></app-root>
+  <app-root>
+    <style>
+      .siha-splash {
+        position: fixed;
+        top: 0; left: 0; width: 100vw; height: 100vh;
+        background: radial-gradient(circle at center, #0F172A 0%, #020617 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        font-family: 'Roboto', sans-serif;
+      }
+      .siha-splash-logo {
+        width: 280px;
+        max-width: 80vw;
+        animation: splash-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        filter: drop-shadow(0 0 20px rgba(0, 229, 204, 0.2));
+      }
+      .siha-loader-wrapper {
+        margin-top: 50px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .siha-loader {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(0, 229, 204, 0.15);
+        border-radius: 50%;
+        border-top-color: #00E5CC;
+        animation: splash-spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      .siha-splash-text {
+        margin-top: 24px;
+        color: #94A3B8;
+        font-size: 13px;
+        letter-spacing: 3px;
+        font-weight: 500;
+        text-transform: uppercase;
+        animation: splash-fade 1.5s ease-in-out infinite alternate;
+      }
+      @keyframes splash-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(0.97); opacity: 0.85; }
+      }
+      @keyframes splash-spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes splash-fade {
+        from { opacity: 0.4; }
+        to { opacity: 1; }
+      }
+    </style>
+    <div class="siha-splash">
+      <img src="logo.svg" alt="SihaLink" class="siha-splash-logo" />
+      <div class="siha-loader-wrapper">
+        <div class="siha-loader"></div>
+        <div class="siha-splash-text">Initializing Swarm</div>
+      </div>
+    </div>
+  </app-root>
 </body>
 
 </html>

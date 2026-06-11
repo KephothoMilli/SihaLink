@@ -31,7 +31,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$AgentName   = "afya-voice-orchestrator"
+$AgentName   = "sihalink-orchestrator"
 $Image       = "gcr.io/$ProjectId/$AgentName`:latest"
 $SaEmail     = "$AgentName@$ProjectId.iam.gserviceaccount.com"
 
@@ -94,9 +94,13 @@ $RequiredSecrets = @(
     "GOOGLE_MAPS_API_KEY",
     "MONGODB_ATLAS_URI",
     "TELEGRAM_BOT_TOKEN",
-    "FACILITY_TELEGRAM_ID"
+    "FACILITY_TELEGRAM_ID",
+    "VOYAGE_API_KEY"          # Required — Voyage AI RAG embeddings
 )
-$OptionalSecrets = @("VOYAGE_API_KEY", "TELEGRAM_WEBHOOK_URL")
+# TELEGRAM_WEBHOOK_URL — only needed for webhook mode, not long-polling.
+# DYNATRACE_API_TOKEN  — optional observability.
+# Both are auto-created with an empty placeholder so --set-secrets never errors.
+$OptionalSecrets = @("TELEGRAM_WEBHOOK_URL", "DYNATRACE_API_TOKEN")
 
 foreach ($secret in $RequiredSecrets) {
     $exists = gcloud secrets describe $secret --project=$ProjectId 2>$null
@@ -115,8 +119,18 @@ foreach ($secret in $RequiredSecrets) {
 
 foreach ($secret in $OptionalSecrets) {
     $exists = gcloud secrets describe $secret --project=$ProjectId 2>$null
-    if ($exists) { Ok "Optional secret $secret exists" }
-    else { Warn "Optional secret $secret not set (skipping)" }
+    if ($exists) {
+        Ok "Optional secret $secret exists"
+    } else {
+        # Auto-create with empty string so Secret Manager references don't fail
+        Write-Host "  Creating $secret with empty placeholder..." -ForegroundColor Gray
+        "" | gcloud secrets create $secret --data-file=- --project=$ProjectId --quiet 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Ok "Optional secret $secret created (empty placeholder)"
+        } else {
+            Warn "Optional secret $secret skipped (using default)"
+        }
+    }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -156,18 +170,86 @@ Step "5/8" "Container build & push"
 
 Invoke-Gcloud auth configure-docker gcr.io --quiet | Out-Null
 
-$gitHash = (git rev-parse --short HEAD 2>$null) ?? "unknown"
-docker build `
-    --tag $Image `
-    --label "git-commit=$gitHash" `
-    --label "build-env=$Environment" `
-    .
-if ($LASTEXITCODE -ne 0) { Fail "docker build failed" }
-Ok "Image built: $Image"
+$gitHash = (git rev-parse --short HEAD 2>$null) ?? "latest"
 
-docker push $Image
-if ($LASTEXITCODE -ne 0) { Fail "docker push failed" }
-Ok "Image pushed to GCR"
+# ── Detect whether Docker daemon is reachable ────────────────────────────────
+$dockerRunning = $false
+try {
+    $dockerInfo = docker info 2>&1
+    if ($LASTEXITCODE -eq 0) { $dockerRunning = $true }
+} catch { }
+
+if ($dockerRunning) {
+    # Local Docker build + push
+    Write-Host "  Docker Desktop detected — building locally" -ForegroundColor Gray
+
+    docker build `
+        --tag $Image `
+        --label "git-commit=$gitHash" `
+        --label "build-env=$Environment" `
+        .
+    if ($LASTEXITCODE -ne 0) { Fail "docker build failed" }
+    Ok "Image built: $Image"
+
+    docker push $Image
+    if ($LASTEXITCODE -ne 0) { Fail "docker push failed" }
+    Ok "Image pushed to GCR"
+
+} else {
+    # Docker not available — use Cloud Build (no local Docker needed)
+    Warn "Docker Desktop is not running — using Cloud Build instead (no local Docker needed)"
+    Write-Host "  Submitting source to Cloud Build..." -ForegroundColor Gray
+
+    $cloudbuildConfig = Join-Path (Split-Path $PSScriptRoot) "deploy\cloudbuild.yaml"
+    if (-not (Test-Path $cloudbuildConfig)) {
+        $cloudbuildConfig = "deploy\cloudbuild.yaml"
+    }
+
+    $ServiceUrl = (gcloud run services describe $AgentName `
+        --region=$Region --format="value(status.url)" 2>$null)
+    $ViteUrl = if ($ServiceUrl) { $ServiceUrl } else { "https://$AgentName-$ProjectId-uc.a.run.app" }
+
+    & gcloud builds submit `
+        --config $cloudbuildConfig `
+        --project $ProjectId `
+        --substitutions "_PROJECT_ID=$ProjectId,_REGION=$Region,_SERVICE_NAME=$AgentName,_SA_EMAIL=$SaEmail,_SERVICE_URL=$ViteUrl,_FIREBASE_PROJECT=$ProjectId" `
+        .
+    if ($LASTEXITCODE -ne 0) { Fail "Cloud Build failed — check logs at https://console.cloud.google.com/cloud-build/builds?project=$ProjectId" }
+    Ok "Cloud Build complete — image built and pushed via GCP"
+
+    # Cloud Build already deploys to Cloud Run and Firebase, skip steps 6 & 7
+    Write-Host "`n  Cloud Build ran the full pipeline (build → push → deploy → firebase)" -ForegroundColor Cyan
+    Write-Host "  Skipping steps 6 and 7 (already done by Cloud Build)" -ForegroundColor Gray
+
+    $AgentUrl = (gcloud run services describe $AgentName `
+        --region=$Region --format="value(status.url)" 2>$null) ?? $ViteUrl
+    $FirebaseUrl = "https://$ProjectId.web.app"
+
+    # Jump to health check
+    Step "8/8" "Health verification"
+    Start-Sleep -Seconds 10
+    try {
+        $token = (gcloud auth print-identity-token 2>$null)
+        $headers = @{ Authorization = "Bearer $token" }
+        $resp = Invoke-WebRequest -Uri "$AgentUrl/health" -Headers $headers -UseBasicParsing -TimeoutSec 15
+        Ok "Orchestrator /health → $($resp.StatusCode) OK"
+    } catch {
+        Warn "Orchestrator /health not yet ready — service may still be starting"
+    }
+
+    Write-Host "`n╔══════════════════════════════════════════════════════════╗" -ForegroundColor Green
+    Write-Host "║              Deployment Complete ✅                     ║" -ForegroundColor Green
+    Write-Host "╚══════════════════════════════════════════════════════════╝`n" -ForegroundColor Green
+    Write-Host "  📱 Frontend          : $FirebaseUrl"
+    Write-Host "  🤖 Agent Runtime     : $AgentUrl"
+    Write-Host "  🔍 Health check      : $AgentUrl/health"
+    Write-Host ""
+    Write-Host "  Useful commands:"
+    Write-Host "    Logs    : gcloud run services logs read $AgentName --region=$Region --follow"
+    Write-Host "    Rollback: gcloud run services update-traffic $AgentName --to-revisions=PREV=100 --region=$Region"
+    Write-Host ""
+    exit 0
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 6 — Deploy to Google Agent Runtime / Cloud Run
@@ -185,11 +267,12 @@ foreach ($s in $OptionalSecrets) {
 $adkAvailable = Get-Command adk -ErrorAction SilentlyContinue
 if ($adkAvailable) {
     try {
-        adk deploy agent-runtime `
+        adk deploy cloud_run `
             --project=$ProjectId `
             --region=$Region `
-            --service-account=$SaEmail `
-            agents/orchestrator
+            --service_name=$AgentName `
+            agents/orchestrator `
+            -- --service-account=$SaEmail
         Ok "Deployed via ADK CLI"
     } catch {
         Warn "ADK deploy failed — falling back to Cloud Run"
@@ -268,8 +351,8 @@ export const environment = {
 "@
 Set-Content -Path "src/environments/environment.prod.ts" -Value $envContent -Encoding UTF8
 
-npm run build
-if ($LASTEXITCODE -ne 0) { Fail "npm run build failed" }
+npm run build:prod
+if ($LASTEXITCODE -ne 0) { Fail "npm run build:prod failed" }
 Ok "Frontend built (dist/)"
 
 firebase deploy --only hosting --project=$ProjectId
@@ -307,3 +390,4 @@ Write-Host "    Logs    : gcloud run services logs read $AgentName --region=$Reg
 Write-Host "    Secrets : gcloud secrets list --project=$ProjectId"
 Write-Host "    Rollback: gcloud run services update-traffic $AgentName --to-revisions=PREV=100"
 Write-Host ""
+

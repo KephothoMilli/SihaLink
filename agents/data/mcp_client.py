@@ -15,7 +15,7 @@ All blocking pymongo calls run in a thread executor to keep FastAPI healthy.
 import os
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -183,44 +183,73 @@ class DataAgent:
         """
         Creates the Atlas Vector Search index on encounters.embedding.
         Requires MongoDB Atlas M10+ cluster. Idempotent — safe to call repeatedly.
-        Uses 3072 dims to match gemini-embedding-001 (or 1024 for Voyage AI).
+
+        Dimensions are read from the active embedding provider:
+          - Voyage AI voyage-3 → 1024 dims  (primary, MongoDB RAG integration)
+          - Google gemini-embedding-001 → 3072 dims  (fallback)
+
+        Uses cosine similarity as recommended by Voyage AI for voyage-3.
+        Index type: vectorSearch (Atlas Search v2 — replaces deprecated knnVector).
         """
-        from .embedding_service import get_embedding_dim
+        from .embedding_service import get_embedding_dim, VOYAGE_DIM
         dims = get_embedding_dim()
+        logger.info(
+            "Creating Atlas Vector Search indexes (dims=%d, provider=%s) ...",
+            dims,
+            "voyage-3" if dims == VOYAGE_DIM else "gemini-embedding-001",
+        )
+
+        # Atlas Vector Search index definition (new vectorSearch type, not knnVector)
         index_def = {
-            "mappings": {
-                "dynamic": False,
-                "fields": {
-                    "embedding": {
-                        "type": "knnVector",
-                        "dimensions": dims,
-                        "similarity": "cosine",
-                    }
-                },
-            }
+            "fields": [
+                {
+                    "type":       "vector",
+                    "path":       "embedding",
+                    "numDimensions": dims,
+                    "similarity": "cosine",
+                }
+            ]
         }
-        logger.info("Creating Atlas Vector Search indexes (dims=%d) ...", dims)
+
+        results = {}
+        for collection in ("encounters", "agent_logs"):
+            try:
+                self.db.command(
+                    "createSearchIndexes",
+                    collection,
+                    indexes=[{
+                        "name":       "vector_index",
+                        "type":       "vectorSearch",
+                        "definition": index_def,
+                    }],
+                )
+                logger.info("✅ Atlas Vector Search index created on %s (%d dims)", collection, dims)
+                results[collection] = "created"
+            except OperationFailure as exc:
+                # Index already exists — not an error
+                if "already exists" in str(exc).lower() or "IndexAlreadyExists" in str(exc):
+                    logger.debug("Vector search index already exists on %s", collection)
+                    results[collection] = "exists"
+                else:
+                    logger.info("Vector search index note (%s): %s", collection, exc)
+                    results[collection] = "skipped"
+
+        return {
+            "dimensions": dims,
+            "similarity": "cosine",
+            "index":      "vector_index",
+            "results":    results,
+        }
+
+    def ensure_search_indexes(self) -> None:
+        """
+        Called on startup to ensure Atlas Search + Vector Search indexes exist.
+        Non-fatal — warnings only, never blocks startup.
+        """
         try:
-            self.db.command(
-                "createSearchIndexes",
-                "encounters",
-                indexes=[{"name": "vector_index", "definition": index_def}],
-            )
-            logger.info("✅ Atlas Vector Search index created on encounters")
-        except OperationFailure as exc:
-            logger.info("Vector search index note (encounters may already exist): %s", exc)
-            
-        try:
-            self.db.command(
-                "createSearchIndexes",
-                "agent_logs",
-                indexes=[{"name": "vector_index", "definition": index_def}],
-            )
-            logger.info("✅ Atlas Vector Search index created on agent_logs")
-            return {"created": True, "index": "vector_index", "dimensions": dims}
-        except OperationFailure as exc:
-            logger.info("Vector search index note (agent_logs may already exist): %s", exc)
-            return {"created": False, "note": str(exc)}
+            self.create_vector_search_index()
+        except Exception as exc:
+            logger.warning("Search index setup skipped: %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # ENCOUNTERS
@@ -235,7 +264,7 @@ class DataAgent:
             if not connected:
                 raise RuntimeError("MongoDB not connected — encounter not stored")
         
-        encounter_doc["timestamp"] = datetime.utcnow()
+        encounter_doc["timestamp"] = datetime.now(timezone.utc)
         encounter_doc["synced"] = True
         try:
             encounter_doc["embedding"] = (
@@ -255,7 +284,7 @@ class DataAgent:
         self, encounters: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Batch insert up to 50 encounters (offline sync). Generates embeddings."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         for doc in encounters:
             doc["timestamp"] = now
             doc["synced"] = True
@@ -389,7 +418,7 @@ class DataAgent:
                     "$set": {
                         "status": status,
                         "acknowledged_by": user_id,
-                        "acknowledged_at": datetime.utcnow(),
+                        "acknowledged_at": datetime.now(timezone.utc),
                     }
                 },
             ),
@@ -412,7 +441,7 @@ class DataAgent:
                     "$set": {
                         "status": "resolved",
                         "resolved_by": user_id,
-                        "resolved_at": datetime.utcnow(),
+                        "resolved_at": datetime.now(timezone.utc),
                         "resolution_notes": notes,
                     }
                 },
@@ -440,7 +469,7 @@ class DataAgent:
         referral_doc = {
             "referral_id": f"REF-{uuid4().hex[:8].upper()}",
             "encounter_id": encounter_doc.get("encounter_id"),
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
             "status": "pending",  # pending → accepted / redirected
             "triage_color": extracted.get("triage_color"),
             "syndrome": extracted.get("syndrome"),
@@ -483,7 +512,7 @@ class DataAgent:
                 {
                     "$set": {
                         "status": status,
-                        "updated_at": datetime.utcnow(),
+                        "updated_at": datetime.now(timezone.utc),
                         "notes": notes,
                     }
                 },
@@ -543,7 +572,7 @@ class DataAgent:
         triage = extracted.get("triage_color", "GREEN")
         encounter_id = encounter_doc.get("encounter_id", "")
         chw_id = encounter_doc.get("chw_id", "unknown")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         day_offsets = FOLLOWUP_SCHEDULE.get(triage, FOLLOWUP_SCHEDULE["GREEN"])
         docs = []
@@ -606,7 +635,7 @@ class DataAgent:
         if county:
             query["county"] = county
         if overdue_only:
-            query["due_date"] = {"$lte": datetime.utcnow()}
+            query["due_date"] = {"$lte": datetime.now(timezone.utc)}
 
         return list(
             self.db.follow_ups.find(query, {"_id": 0})
@@ -644,7 +673,7 @@ class DataAgent:
                         "outcome": outcome,
                         "notes": notes,
                         "completed_by": chw_id,
-                        "completed_at": datetime.utcnow(),
+                        "completed_at": datetime.now(timezone.utc),
                     }
                 },
             ),
@@ -669,7 +698,7 @@ class DataAgent:
                 {
                     "$set": {
                         "due_date": new_due_date,
-                        "rescheduled_at": datetime.utcnow(),
+                        "rescheduled_at": datetime.now(timezone.utc),
                         "reschedule_reason": reason,
                     }
                 },
@@ -700,7 +729,7 @@ class DataAgent:
             {
                 "county": county,
                 "status": "pending",
-                "due_date": {"$lte": datetime.utcnow()},
+                "due_date": {"$lte": datetime.now(timezone.utc)},
             }
         )
         return {
@@ -726,7 +755,7 @@ class DataAgent:
         Returns:
             dict with chw_id and upserted status.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         chw_doc = {
             "chw_id": chw_data.get("chw_id", f"CHW-{uuid4().hex[:6].upper()}"),
             "name": chw_data.get("name", "Unknown"),
@@ -787,7 +816,7 @@ class DataAgent:
             None,
             lambda: self.db.chws.update_one(
                 {"chw_id": chw_id},
-                {"$set": {"last_active": datetime.utcnow()}},
+                {"$set": {"last_active": datetime.now(timezone.utc)}},
             ),
         )
 
@@ -806,7 +835,7 @@ class DataAgent:
         Returns:
             dict with protocol_id and upserted status.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         syndrome = protocol_doc.get("syndrome", "unknown")
         county = protocol_doc.get("county", "all")
 
@@ -1112,17 +1141,22 @@ class DataAgent:
         if syndrome:
             post_filter["extracted.syndrome"] = syndrome
 
+        # Atlas Vector Search v2 pipeline
+        # Uses generate_query_embedding (not document) for better RAG recall
+        vector_stage: Dict[str, Any] = {
+            "$vectorSearch": {
+                "index":         "vector_index",
+                "path":          "embedding",
+                "queryVector":   query_vec,
+                "numCandidates": num_candidates,
+                "limit":         limit,
+            }
+        }
+        if post_filter:
+            vector_stage["$vectorSearch"]["filter"] = post_filter
+
         pipeline: List[Dict[str, Any]] = [
-            {
-                "$vectorSearch": {
-                    "index":         "vector_index",
-                    "path":          "embedding",
-                    "queryVector":   query_vec,
-                    "numCandidates": num_candidates,
-                    "limit":         limit,
-                    **({"filter": post_filter} if post_filter else {}),
-                }
-            },
+            vector_stage,
             {
                 "$addFields": {
                     "vector_score": {"$meta": "vectorSearchScore"}
@@ -1335,7 +1369,7 @@ class DataAgent:
         if not self.connected:
             return {"status": "degraded", "message": "MongoDB not connected"}
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         today_start  = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_ago     = now - timedelta(days=7)
         month_ago    = now - timedelta(days=30)
@@ -1454,7 +1488,7 @@ class DataAgent:
         if not self.connected:
             return {"status": "degraded"}
 
-        now        = datetime.utcnow()
+        now        = datetime.now(timezone.utc)
         week_ago   = now - timedelta(days=7)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -1520,7 +1554,7 @@ class DataAgent:
         result = self.db.referrals.update_one(
             {"referral_id": referral_id},
             {"$set": {"status": status, "notes": notes,
-                       "updated_at": datetime.utcnow()}},
+                       "updated_at": datetime.now(timezone.utc)}},
         )
         return {"matched": result.matched_count, "modified": result.modified_count}
 
@@ -1554,7 +1588,7 @@ class DataAgent:
             "detail": detail,
             "level": level,
             "session_id": session_id,
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
         }
         try:
             doc["embedding"] = self.embedding_svc.generate_text_embedding(
@@ -1617,3 +1651,4 @@ class DataAgent:
         except OperationFailure as exc:
             logger.error("Vector search failed on agent_logs: %s", exc)
             return []
+

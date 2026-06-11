@@ -1,0 +1,116 @@
+14:11:26  INFO     Ô£à Voyage AI connected ÔÇö voyage-3 (1024 dims)
+14:11:30  INFO     Ô£à MongoDB connected
+14:12:05  INFO     Collection encounters  : 1206 total, 1144 need re-embedding
+14:12:08  INFO       encounters: 20/1144 (2%) ÔÇö 20 updated
+14:12:12  INFO       encounters: 40/1144 (3%) ÔÇö 40 updated
+14:12:14  INFO       encounters: 60/1144 (5%) ÔÇö 60 updated
+14:12:17  INFO       encounters: 80/1144 (7%) ÔÇö 80 updated
+14:12:20  INFO       encounters: 100/1144 (9%) ÔÇö 100 updated
+14:12:24  INFO       encounters: 120/1144 (10%) ÔÇö 120 updated
+14:12:27  INFO       encounters: 140/1144 (12%) ÔÇö 140 updated
+14:12:31  INFO       encounters: 160/1144 (14%) ÔÇö 160 updated
+14:12:34  INFO       encounters: 180/1144 (16%) ÔÇö 180 updated
+14:12:38  INFO       encounters: 200/1144 (17%) ÔÇö 200 updated
+14:12:42  INFO       encounters: 220/1144 (19%) ÔÇö 220 updated
+14:12:47  INFO       encounters: 240/1144 (21%) ÔÇö 240 updated
+14:12:50  INFO       encounters: 260/1144 (23%) ÔÇö 260 updated
+14:12:53  INFO       encounters: 280/1144 (24%) ÔÇö 280 updated
+14:12:56  INFO       encounters: 300/1144 (26%) ÔÇö 300 updated
+14:12:59  INFO       encounters: 320/1144 (28%) ÔÇö 320 updated
+14:13:03  INFO       encounters: 340/1144 (30%) ÔÇö 340 updated
+14:13:07  INFO       encounters: 360/1144 (31%) ÔÇö 360 updated
+14:13:10  INFO       encounters: 380/1144 (33%) ÔÇö 380 updated
+14:13:13  INFO       encounters: 400/1144 (35%) ÔÇö 400 updated
+14:13:16  INFO       encounters: 420/1144 (37%) ÔÇö 420 updated
+14:13:19  INFO       encounters: 440/1144 (38%) ÔÇö 440 updated
+14:13:22  INFO       encounters: 460/1144 (40%) ÔÇö 460 updated
+14:13:25  INFO       encounters: 480/1144 (42%) ÔÇö 480 updated
+14:13:28  INFO       encounters: 500/1144 (44%) ÔÇö 500 updated
+14:13:30  INFO       encounters: 520/1144 (45%) ÔÇö 520 updated
+14:13:33  INFO       encounters: 540/1144 (47%) ÔÇö 540 updated
+14:13:36  INFO       encounters: 560/1144 (49%) ÔÇö 560 updated
+14:13:38  INFO       encounters: 580/1144 (51%) ÔÇö 580 updated
+14:13:42  INFO       encounters: 600/1144 (52%) ÔÇö 600 updated
+14:13:45  INFO       encounters: 620/1144 (54%) ÔÇö 620 updated
+14:13:49  INFO       encounters: 640/1144 (56%) ÔÇö 640 updated
+14:13:52  INFO       encounters: 660/1144 (58%) ÔÇö 660 updated
+14:13:56  INFO       encounters: 680/1144 (59%) ÔÇö 680 updated
+14:14:00  INFO       encounters: 700/1144 (61%) ÔÇö 700 updated
+14:14:03  INFO       encounters: 720/1144 (63%) ÔÇö 720 updated
+14:14:06  INFO       encounters: 740/1144 (65%) ÔÇö 740 updated
+14:14:08  INFO       encounters: 760/1144 (66%) ÔÇö 760 updated
+14:14:12  INFO       encounters: 780/1144 (68%) ÔÇö 780 updated
+14:14:15  INFO       encounters: 800/1144 (70%) ÔÇö 800 updated
+14:14:17  INFO       encounters: 820/1144 (72%) ÔÇö 820 updated
+14:14:20  INFO       encounters: 840/1144 (73%) ÔÇö 840 updated
+14:14:22  INFO       encounters: 860/1144 (75%) ÔÇö 860 updated
+14:14:25  INFO       encounters: 880/1144 (77%) ÔÇö 880 updated
+14:14:28  INFO       encounters: 900/1144 (79%) ÔÇö 900 updated
+14:14:31  INFO       encounters: 920/1144 (80%) ÔÇö 920 updated
+14:14:34  INFO       encounters: 940/1144 (82%) ÔÇö 940 updated
+14:14:37  INFO       encounters: 960/1144 (84%) ÔÇö 960 updated
+14:14:40  INFO       encounters: 980/1144 (86%) ÔÇö 980 updated
+14:14:43  INFO       encounters: 1000/1144 (87%) ÔÇö 1000 updated
+14:14:47  INFO       encounters: 1020/1144 (89%) ÔÇö 1020 updated
+14:14:50  INFO       encounters: 1040/1144 (91%) ÔÇö 1040 updated
+14:14:53  INFO       encounters: 1060/1144 (93%) ÔÇö 1060 updated
+14:14:56  INFO       encounters: 1080/1144 (94%) ÔÇö 1080 updated
+14:14:59  INFO       encounters: 1100/1144 (96%) ÔÇö 1100 updated
+14:15:02  INFO       encounters: 1120/1144 (98%) ÔÇö 1120 updated
+14:15:05  INFO       encounters: 1140/1144 (100%) ÔÇö 1140 updated
+14:15:07  INFO       encounters: 1144/1144 (100%) ÔÇö 1144 updated
+14:15:09  INFO     Collection protocols   : 25 total, 25 need re-embedding
+14:15:11  INFO       protocols: 20/25 (80%) ÔÇö 20 updated
+14:15:13  INFO       protocols: 25/25 (100%) ÔÇö 25 updated
+14:15:22  INFO     Collection agent_logs  : 454 total, 454 need re-embedding
+14:15:24  INFO       agent_logs: 20/454 (4%) ÔÇö 20 updated
+14:15:27  INFO       agent_logs: 40/454 (9%) ÔÇö 40 updated
+14:15:29  INFO       agent_logs: 60/454 (13%) ÔÇö 60 updated
+14:15:32  INFO       agent_logs: 80/454 (18%) ÔÇö 80 updated
+14:15:34  INFO       agent_logs: 100/454 (22%) ÔÇö 100 updated
+14:15:37  INFO       agent_logs: 120/454 (26%) ÔÇö 120 updated
+14:15:39  INFO       agent_logs: 140/454 (31%) ÔÇö 140 updated
+14:15:42  INFO       agent_logs: 160/454 (35%) ÔÇö 160 updated
+14:15:45  INFO       agent_logs: 180/454 (40%) ÔÇö 180 updated
+14:15:48  INFO       agent_logs: 200/454 (44%) ÔÇö 200 updated
+14:15:51  INFO       agent_logs: 220/454 (48%) ÔÇö 220 updated
+14:15:54  INFO       agent_logs: 240/454 (53%) ÔÇö 240 updated
+14:15:57  INFO       agent_logs: 260/454 (57%) ÔÇö 260 updated
+14:16:00  INFO       agent_logs: 280/454 (62%) ÔÇö 280 updated
+14:16:03  INFO       agent_logs: 300/454 (66%) ÔÇö 300 updated
+14:16:06  INFO       agent_logs: 320/454 (70%) ÔÇö 320 updated
+14:16:09  INFO       agent_logs: 340/454 (75%) ÔÇö 340 updated
+14:16:12  INFO       agent_logs: 360/454 (79%) ÔÇö 360 updated
+14:16:14  INFO       agent_logs: 380/454 (84%) ÔÇö 380 updated
+14:16:17  INFO       agent_logs: 400/454 (88%) ÔÇö 400 updated
+14:16:19  INFO       agent_logs: 420/454 (93%) ÔÇö 420 updated
+14:16:22  INFO       agent_logs: 440/454 (97%) ÔÇö 440 updated
+14:16:24  INFO       agent_logs: 454/454 (100%) ÔÇö 454 updated
+14:16:25  INFO     Recreating Atlas Vector Search indexes...
+14:16:26  INFO     Dropped existing vector_index on encounters
+14:16:29  INFO     Ô£à Vector index created on encounters (1024 dims, cosine)
+14:16:30  INFO     Ô£à Vector index created on agent_logs (1024 dims, cosine)
+
+==========================================================
+     SihaLink -- Voyage AI Re-Embedding Script
+==========================================================
+  Model:      voyage-3 (1024 dims, cosine)
+  Collection: all
+  Batch size: 20
+  Dry run:    False
+  Force:      False
+
+
+==========================================================
+             Re-Embedding Complete
+==========================================================
+  Documents processed : 1685
+  Embeddings updated  : 1623
+  Already correct     : 62
+  Errors              : 0
+  Time elapsed        : 295.0s
+
+  NOTE: Atlas Vector Search index rebuild is async.
+  Check status: MongoDB Atlas > Search Indexes > vector_index
+  Status shows BUILDING then READY (usually 1-5 min).
+

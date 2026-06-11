@@ -10,6 +10,8 @@
 [![MongoDB Atlas](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/atlas)
 [![Cloud Run](https://img.shields.io/badge/Cloud%20Run-Deployed-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com/run)
 [![Firebase Hosting](https://img.shields.io/badge/Firebase-Hosting-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com)
+[![Telegram Bot](https://img.shields.io/badge/Telegram-@SihaLinkBot-26A5E4?logo=telegram&logoColor=white)](https://t.me/SihaLinkBot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
 
@@ -160,12 +162,14 @@ SihaLink/
 ./deploy/deploy.sh --project kephothoagenticai --region us-central1
 ```
 
-**Frontend — Firebase Hosting:**
+**Frontend — Firebase Hosting:** [kephothoagenticai.web.app](https://kephothoagenticai.web.app)
 
 ```bash
 cd frontend && npm run build:prod
 firebase deploy --only hosting --project kephothoagenticai
 ```
+
+**Telegram Bot:** [@SihaLinkBot](https://t.me/SihaLinkBot)
 
 **CI/CD — triggers automatically on push to `main`:**
 
@@ -180,5 +184,7 @@ See [QUICK_START.md](QUICK_START.md) for local development setup.
 ## License
 
 MIT. Built with ❤️ for Kenya's Community Health Volunteers.
+
+See [LICENSE](LICENSE) for the full text.
 
 _"Afya ni Haki" — Health is a Right_

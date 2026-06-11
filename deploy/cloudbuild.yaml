@@ -145,10 +145,6 @@ steps:
         cd frontend
         firebase deploy --only hosting \
           --project=$_FIREBASE_PROJECT \
-          --non-interactive \
-          --token="$FIREBASE_TOKEN" 2>/dev/null || \
-        firebase deploy --only hosting \
-          --project=$_FIREBASE_PROJECT \
           --non-interactive
     waitFor: [build-frontend]
 

@@ -5,7 +5,8 @@
     <span class="agent-badge">Notify Agent</span>
     <h2>Alert Notification Portal</h2>
     <p class="description">
-      Dispatch urgent outbreak alerts and referral instructions to health professionals, community heads, or supervisors via Telegram and SMS alerts.
+      Dispatch urgent outbreak alerts and referral instructions to health professionals, community heads, or supervisors
+      via Telegram and SMS alerts.
     </p>
   </div>
 
@@ -20,7 +21,7 @@
       <div class="action-card dispatch-card">
         <h3>Dispatch Outbreak Alert</h3>
         <p class="section-hint">Sends live alerts across Telegram channels & SMS integrations:</p>
-        
+
         <div class="notify-form">
           <div class="form-group">
             <label>Alert Title</label>
@@ -29,12 +30,14 @@
 
           <div class="form-group">
             <label>Detailed Instruction Message</label>
-            <textarea [(ngModel)]="notificationMessage" placeholder="Provide clinical steps or referral details..." rows="4"></textarea>
+            <textarea [(ngModel)]="notificationMessage" placeholder="Provide clinical steps or referral details..."
+              rows="4"></textarea>
           </div>
 
           <div class="form-group">
             <label>Recipients (Comma-separated phone numbers or Telegram Chat IDs)</label>
-            <textarea [(ngModel)]="recipients" placeholder="e.g., Worker-001, Supervisor-002, +254712345678" rows="2"></textarea>
+            <textarea [(ngModel)]="recipients" placeholder="e.g., Worker-001, Supervisor-002, +254712345678"
+              rows="2"></textarea>
           </div>
 
           <div class="form-row-group">
@@ -78,13 +81,15 @@
             <span class="label">Recipients Reached:</span>
             <span class="value">{{ notificationResult.recipients_reached }}</span>
           </div>
-          <div class="receipt-row" *ngIf="notificationResult.failed_recipients && notificationResult.failed_recipients.length > 0">
+          <div class="receipt-row"
+            *ngIf="notificationResult.failed_recipients && notificationResult.failed_recipients.length > 0">
             <span class="label">Failed Recipients:</span>
             <span class="valueFailed">{{ notificationResult.failed_recipients.join(', ') }}</span>
           </div>
           <div class="receipt-row">
             <span class="label">Dispatched Time:</span>
-            <span class="value">{{ notificationResult.sent_at | date: 'medium' }}</span>
+            <span class="value">{{ (notificationResult.sent_at_iso || notificationResult.sent_at) | date: 'dd MMM yyyy,
+              HH:mm:ss' }}</span>
           </div>
         </div>
       </div>

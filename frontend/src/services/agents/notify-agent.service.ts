@@ -20,7 +20,8 @@ export interface NotificationPayload {
 
 export interface NotificationResult {
   notification_id: string;
-  sent_at: number;
+  sent_at: number; // milliseconds since epoch (for Angular date pipe)
+  sent_at_iso?: string; // ISO 8601 string with timezone (preferred)
   recipients_reached: number;
   failed_recipients: string[];
   status: 'sent' | 'partial' | 'failed';

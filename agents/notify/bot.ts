@@ -85,7 +85,9 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 const PORT = parseInt(process.env.NOTIFY_PORT ?? "3001", 10);
 const DASHBOARD =
-  process.env.DASHBOARD_URL ?? "https://sihalink.web.app/dashboard";
+  process.env.DASHBOARD_URL ?? "https://kephothoagenticai.web.app/dashboard";
+const BOT_USERNAME = "@SihaLinkBot";
+const LIVE_URL = "https://kephothoagenticai.web.app";
 
 if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN is not set");
 
@@ -281,22 +283,25 @@ bot.use(createConversation(broadcastConversation, "broadcast"));
 
 bot.command("start", async (ctx: MyContext) => {
   await ctx.reply(
-    "🏥 *SihaLink — Kenya National Disease Surveillance*\n\n" +
-      "AI-powered swarm of agents monitoring disease outbreaks in real-time.\n\n" +
-      "*CHW Commands:*\n" +
-      "/report `<text>` — Submit encounter (any language)\n" +
-      "/followup — View your pending follow-ups\n" +
-      "/protocol `<syndrome>` — Get response protocol\n" +
-      "/status — County surveillance stats\n\n" +
-      "*District Officer Commands:*\n" +
-      "/register — Set county jurisdiction\n" +
-      "/alerts — Active outbreak alerts\n" +
-      "/acknowledge `<id>` — Acknowledge alert\n" +
-      "/resolve `<id>` `<notes>` — Resolve alert\n" +
-      "/swarm — Autonomous agent swarm status\n" +
-      "/broadcast — Message all CHVs\n" +
-      "/dashboard — Open web dashboard",
-    { parse_mode: "Markdown" },
+    `🏥 *SihaLink — Kenya National Disease Surveillance*\n` +
+      `${BOT_USERNAME} · [Live Dashboard](${LIVE_URL})\n\n` +
+      `AI-powered swarm of agents monitoring disease outbreaks in real-time across Kenya's 47 counties.\n\n` +
+      `*CHW Commands:*\n` +
+      `/report \\<text\\> — Submit encounter \\(any language\\)\n` +
+      `/followup — View your pending follow\\-ups\n` +
+      `/protocol \\<syndrome\\> — Get WHO/MoH response protocol\n` +
+      `/status — County surveillance stats\n\n` +
+      `*District Officer Commands:*\n` +
+      `/register — Set your county jurisdiction\n` +
+      `/alerts — Active outbreak alerts\n` +
+      `/acknowledge \\<id\\> — Acknowledge an alert\n` +
+      `/resolve \\<id\\> \\<notes\\> — Resolve an alert\n` +
+      `/swarm — Swarm health & stats\n` +
+      `/broadcast — Message all CHVs in your county\n` +
+      `/dashboard — Open live surveillance dashboard\n\n` +
+      `📊 Dashboard: ${LIVE_URL}\n` +
+      `_"Afya ni Haki" — Health is a Right_`,
+    { parse_mode: "MarkdownV2" },
   );
 });
 
@@ -744,7 +749,12 @@ bot.command("broadcast", async (ctx: MyContext) => {
 // ── /dashboard ────────────────────────────────────────────────────────────────
 
 bot.command("dashboard", async (ctx: MyContext) => {
-  await ctx.reply(`📊 Open the SihaLink surveillance dashboard:\n${DASHBOARD}`);
+  await ctx.reply(
+    `📊 *SihaLink Live Dashboard*\n\n` +
+      `Open the real-time surveillance dashboard:\n${LIVE_URL}\n\n` +
+      `_Tracks encounter flow, active alerts, CHW activity, and swarm health across all 47 counties._`,
+    { parse_mode: "MarkdownV2" },
+  );
 });
 
 // ── General Text Message Listener — handles active gates and fallback ────────

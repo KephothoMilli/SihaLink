@@ -22,7 +22,7 @@ Follow-up schedule written at FOLLOW_UP_SCHEDULED:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -94,7 +94,7 @@ class Orchestrator:
 
         self.sessions[session_id] = {
             "state": EncounterState.LISTENING,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "retries": 0,
         }
         logger.info("▶ Session %s started", session_id)
@@ -274,7 +274,7 @@ class Orchestrator:
                 )
 
             self.sessions[session_id]["state"] = EncounterState.COMPLETE
-            self.sessions[session_id]["completed_at"] = datetime.utcnow().isoformat()
+            self.sessions[session_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
             logger.info("✅ Session %s completed successfully.", session_id)
 
             if session_id.startswith("tg-"):
@@ -485,7 +485,7 @@ class Orchestrator:
 
     def queue_offline_encounter(self, encounter_doc: Dict[str, Any]) -> int:
         """Store an encounter locally when offline."""
-        encounter_doc["queued_at"] = datetime.utcnow().isoformat()
+        encounter_doc["queued_at"] = datetime.now(timezone.utc).isoformat()
         encounter_doc["synced"] = False
         self.offline_queue.append(encounter_doc)
 
@@ -531,3 +531,4 @@ class Orchestrator:
             errors,
         )
         return {"total": total, "processed": processed, "errors": errors}
+

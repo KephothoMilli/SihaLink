@@ -1601,9 +1601,12 @@ async def notify_dispatch(payload: Dict[str, Any]):
             failed.append(str(recipient))
 
     import time as _time
+    from datetime import datetime, timezone as _tz
+    now_iso = datetime.now(_tz.utc).isoformat()
     return _safe_serialize({
-        "notification_id":   f"notif-{int(_time.time())}",
-        "sent_at":           int(_time.time()),
+        "notification_id":    f"notif-{int(_time.time())}",
+        "sent_at":            int(_time.time() * 1000),   # milliseconds for Angular date pipe
+        "sent_at_iso":        now_iso,
         "recipients_reached": delivered_count,
         "failed_recipients":  failed,
         "status":             "sent" if not failed else ("partial" if delivered_count else "failed"),
@@ -2352,7 +2355,7 @@ async def swarm_stream(request: Request):
 
     async def event_generator():
         # Send a hello ping so the browser knows the connection is live
-        yield f"data: {json.dumps({'topic': 'connected', 'source': 'server', 'ts': __import__('datetime').datetime.utcnow().isoformat()})}\n\n"
+        yield f"data: {json.dumps({'topic': 'connected', 'source': 'server', 'ts': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()})}\n\n"
         try:
             while True:
                 if await request.is_disconnected():

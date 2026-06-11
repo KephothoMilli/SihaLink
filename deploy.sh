@@ -163,36 +163,41 @@ for SECRET in "${OPTIONAL_SECRETS[@]}"; do
   fi
 done
 
+# Fallback: deploy directly to Cloud Run (used when ADK deploy fails or ADK is absent)
+_deploy_cloud_run() {
+  # shellcheck disable=SC2086
+  gcloud run deploy "${AGENT_NAME}" \
+    --image="${IMAGE}" \
+    --region="${REGION}" \
+    --platform=managed \
+    --service-account="${SA_EMAIL}" \
+    --port=8080 \
+    --memory=2Gi \
+    --cpu=2 \
+    --min-instances=1 \
+    --max-instances=10 \
+    --timeout=300 \
+    --set-env-vars="ENVIRONMENT=${ENVIRONMENT},NOTIFY_AGENT_URL=http://localhost:3001" \
+    ${SECRET_FLAGS} \
+    --allow-unauthenticated \
+    --quiet
+}
+
 # Try ADK deploy first; fall back to Cloud Run deploy
 if command -v adk &>/dev/null; then
-  adk deploy agent-runtime \
+  adk deploy cloud_run \
     --project="${PROJECT_ID}" \
     --region="${REGION}" \
-    --service-account="${SA_EMAIL}" \
+    --service_name="${AGENT_NAME}" \
     agents/orchestrator \
+    -- --service-account="${SA_EMAIL}" \
     2>/dev/null && ok "Deployed via ADK CLI" || {
       warn "ADK deploy failed — falling back to Cloud Run"
       _deploy_cloud_run
+      ok "Deployed to Cloud Run"
     }
 else
   warn "ADK CLI not found — deploying directly to Cloud Run"
-  _deploy_cloud_run() {
-    gcloud run deploy "${AGENT_NAME}" \
-      --image="${IMAGE}" \
-      --region="${REGION}" \
-      --platform=managed \
-      --service-account="${SA_EMAIL}" \
-      --port=8080 \
-      --memory=2Gi \
-      --cpu=2 \
-      --min-instances=1 \
-      --max-instances=10 \
-      --timeout=300 \
-      --set-env-vars="ENVIRONMENT=${ENVIRONMENT},NOTIFY_AGENT_URL=http://localhost:3001" \
-      ${SECRET_FLAGS} \
-      --allow-unauthenticated \
-      --quiet
-  }
   _deploy_cloud_run
   ok "Deployed to Cloud Run"
 fi
