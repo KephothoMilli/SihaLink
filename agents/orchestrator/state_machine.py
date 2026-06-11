@@ -73,6 +73,7 @@ class Orchestrator:
         coords: Dict[str, float] = None,
         form_data: Optional[Dict] = None,
         telegram_payload: Optional[Dict] = None,
+        chw_id: Optional[str] = None,
     ):
         """
         Full lifecycle for a single CHV encounter.
@@ -169,15 +170,16 @@ class Orchestrator:
             # the 'extracted' key so the final MongoDB document matches the
             # structure the frontend and downstream agents expect:
             #   { extracted: {syndrome, triage_color, …}, admin_hierarchy: {…}, … }
-            chw_id = (
-                extracted_json.get("chw_id")
+            chw_id_resolved = (
+                chw_id
+                or extracted_json.get("chw_id")
                 or (telegram_payload or {}).get("chw_id")
                 or (form_data or {}).get("chw_id")
                 or "unknown"
             )
             encounter_envelope = {
                 "extracted": extracted_json,
-                "chw_id": chw_id,
+                "chw_id": chw_id_resolved,
                 "session_id": session_id,
                 # Pass county hint for GPS-less enrichment (web form / no device GPS)
                 "county": (
@@ -206,6 +208,19 @@ class Orchestrator:
             )
             enriched_json["encounter_id"] = encounter_id
             self.sessions[session_id]["encounter_id"] = encounter_id
+
+            # Publish encounter.stored so swarm triggers surveillance + contact tracing
+            try:
+                from agents.swarm import SwarmController, SwarmEvent
+                swarm = SwarmController.get()
+                if swarm.started:
+                    await swarm.bus.publish(SwarmEvent(
+                        "encounter.stored",
+                        enriched_json,
+                        source="orchestrator",
+                    ))
+            except Exception as _swarm_exc:
+                logger.debug("Swarm event publish skipped: %s", _swarm_exc)
 
             # 3b. FOLLOW_UP_SCHEDULED — auto-schedule follow-up tasks
             try:

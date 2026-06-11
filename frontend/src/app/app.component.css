@@ -393,7 +393,8 @@
 
 .gate-actions {
   display: flex;
-  gap: 1rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .btn-confirm {
@@ -428,6 +429,59 @@
 
 .btn-decline:hover {
   background-color: #e2e8f0;
+}
+
+/* WhatsApp share button — gate modal */
+.btn-whatsapp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.65rem 1rem;
+  background-color: #25d366;
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    opacity 0.2s;
+  white-space: nowrap;
+}
+.btn-whatsapp:hover {
+  background-color: #128c57;
+}
+.wa-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* WhatsApp share link — toast */
+.toast-wa-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  background: #25d36622;
+  color: #128c57;
+  border: 1px solid #25d36640;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.toast-wa-link:hover {
+  background: #25d36640;
+}
+.wa-icon-sm {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
 }
 
 @keyframes slide-up {

@@ -261,6 +261,54 @@ export class AppComponent implements OnInit, OnDestroy {
     return Array.isArray(s) ? s : [];
   }
 
+  /**
+   * Build a wa.me deep-link pre-filled with the referral summary.
+   * Opens WhatsApp Web or the WhatsApp app with the message ready to send.
+   * No API or Twilio needed — pure deep-link.
+   */
+  buildGateWhatsAppLink(session: any): string {
+    const triage = this.resolveGateTriage(session);
+    const syndrome = (this.resolveGateSyndrome(session) || 'unknown').replace(
+      /_/g,
+      ' ',
+    );
+    const complaint =
+      this.resolveGateComplaint(session) || 'See clinical records';
+    const symptoms = this.resolveGateSymptoms(session).join(', ') || '—';
+    const county = session?.data?.geoEnriched?.admin_hierarchy?.county || '';
+    const ward = session?.data?.geoEnriched?.admin_hierarchy?.ward || '';
+    const location = [ward, county].filter(Boolean).join(', ') || 'Unknown';
+    const sid = session?.sessionId || '';
+
+    const msg = [
+      `🏥 *SihaLink Referral Alert* — ${triage}`,
+      `━━━━━━━━━━━━━━`,
+      `*Triage:* ${triage}`,
+      `*Syndrome:* ${syndrome}`,
+      `*Complaint:* ${complaint}`,
+      `*Symptoms:* ${symptoms}`,
+      `*Location:* ${location}`,
+      `*Session:* ${sid}`,
+      ``,
+      `Please prepare to receive patient. Confirm receipt.`,
+    ].join('\n');
+
+    return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
+  /** Build a wa.me deep-link for a swarm alert toast. */
+  buildToastWhatsAppLink(toast: AppToast): string {
+    const lines = [
+      `🚨 *SihaLink Swarm Alert*`,
+      toast.title ? `*${toast.title}*` : '',
+      toast.message,
+      toast.county ? `📍 ${toast.county}` : '',
+      toast.syndrome ? `🦠 ${toast.syndrome}` : '',
+    ].filter(Boolean);
+
+    return `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`;
+  }
+
   async confirmGate(confirmed: boolean) {
     if (!this.gateSession) return;
     const sessionId = this.gateSession.sessionId;

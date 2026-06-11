@@ -2,14 +2,14 @@
 
 # SihaLink 🏥
 
-### An AI-powered disease surveillance swarm for Kenya's Community Health Volunteers
+### AI-powered disease surveillance swarm for Kenya's Community Health Volunteers
 
-[![GitHub](https://img.shields.io/badge/GitHub-SihaLink-181717?logo=github)](https://github.com/KephothoM/SihaLink.git)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Angular 20](https://img.shields.io/badge/Angular-20-DD0031?logo=angular&logoColor=white)](https://angular.dev)
 [![Google ADK](https://img.shields.io/badge/Google-ADK%201.26-4285F4?logo=google&logoColor=white)](https://google.github.io/adk-docs/)
 [![MongoDB Atlas](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/atlas)
 [![Cloud Run](https://img.shields.io/badge/Cloud%20Run-Deployed-4285F4?logo=google-cloud&logoColor=white)](https://cloud.google.com/run)
+[![Firebase Hosting](https://img.shields.io/badge/Firebase-Hosting-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com)
 
 ---
 
@@ -31,51 +31,48 @@ Every year, disease outbreaks in Kenya kill people who could have been saved —
 
 SihaLink is a **multi-agent AI swarm** that gives every one of Kenya's 100,000+ Community Health Volunteers a direct line to an intelligent outbreak detection system — through their phone, in their own language.
 
-A CHV speaks a patient report into her phone in Dholuo. Within seconds:
+A CHW speaks a patient report in Dholuo. Within 30 seconds:
 
-1. **The Intake Agent** transcribes and clinically extracts the report — syndrome, triage color, symptoms, vitals
-2. **The Geo Agent** maps the encounter to its exact ward, sub-county, and county, and finds the three nearest health facilities with drive times
-3. **The Data Agent** stores it in MongoDB Atlas with a vector embedding for semantic search
-4. **The Surveillance Agent** checks if this case is part of a growing cluster — running against 4-week rolling baselines across all 47 counties
-5. **The Notify Agent** fires a Telegram message to the referring facility: _"Incoming RED triage — 6-year-old, severe dehydration, ETA 22 minutes"_
-6. **The Contact Tracing Agent** immediately begins mapping who else the patient may have exposed
+1. **Intake Agent** — transcribes and clinically extracts the report (syndrome, triage, symptoms, vitals) using Gemini 2.5 Flash
+2. **Geo Agent** — maps the encounter to ward/sub-county/county and finds the three nearest facilities with real drive times
+3. **Data Agent** — stores it in MongoDB Atlas with a Voyage AI vector embedding for semantic search
+4. **Surveillance Agent** — checks if this is part of a growing cluster against 4-week rolling baselines across all 47 counties
+5. **Notify Agent** — fires a Telegram message to the facility: _"Incoming RED — 6yr, severe dehydration, ETA 22 min"_
+6. **Contact Tracing Agent** — maps who else the patient may have exposed, assigns CHW visits
 
-All of this happens in under 30 seconds, autonomously, while the CHV is still with the patient.
+All autonomous. Human confirmation only for RED/YELLOW referral dispatch.
 
 ---
 
-## The Swarm Architecture
+## Architecture
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║                    SihaLink Swarm                            ║
+║                       SihaLink Swarm                         ║
 ║                                                              ║
-║   ┌─────────────┐         ┌──────────────────────────────┐  ║
-║   │   Angular   │ HTTPS   │     Orchestrator Agent        │  ║
-║   │  Dashboard  │────────▶│  FastAPI · Google ADK · SSE  │  ║
-║   │(Firebase)   │         └──────────┬───────────────────┘  ║
-║   └─────────────┘                    │                       ║
-║                          ┌───────────┼───────────────────┐  ║
-║                          │           │                   │  ║
-║                    ┌─────▼──┐  ┌─────▼──┐  ┌────────────▼┐ ║
-║                    │ Intake │  │  Geo   │  │    Data     │ ║
-║                    │ Agent  │  │ Agent  │  │   Agent     │ ║
-║                    │Gemini  │  │ Maps   │  │  MongoDB    │ ║
-║                    │  Live  │  │   API  │  │Atlas+Voyage │ ║
-║                    └────────┘  └────────┘  └─────────────┘ ║
-║                          │           │                       ║
-║                    ┌─────▼──┐  ┌─────▼──────────────────┐  ║
-║                    │ Notify │  │     Surveillance Agent  │  ║
-║                    │ Agent  │  │  Outbreak Detection ·   │  ║
-║                    │grammY  │  │  Silent Pandemic Scan · │  ║
-║                    │Telegram│  │  CHW Gap Analysis       │  ║
-║                    └────────┘  └─────────────────────────┘  ║
-║                                        │                     ║
-║                          ┌─────────────▼───────────────┐    ║
-║                          │    Contact Tracing Agent    │    ║
-║                          │  Exposure mapping · CHW     │    ║
-║                          │  task assignment · SAR calc │    ║
-║                          └─────────────────────────────┘    ║
+║  ┌──────────────────┐  HTTPS   ┌─────────────────────────┐  ║
+║  │  Angular 20 SPA  │─────────▶│   Orchestrator Agent    │  ║
+║  │ Firebase Hosting │          │  FastAPI · Google ADK   │  ║
+║  └──────────────────┘          │  SSE · Cloud Run :8080  │  ║
+║                                └────────────┬────────────┘  ║
+║                         ┌───────────────────┼────────────┐  ║
+║                    ┌────▼───┐  ┌────────┐  ┌▼──────────┐ ║
+║                    │Intake  │  │  Geo   │  │   Data    │ ║
+║                    │Agent   │  │ Agent  │  │  Agent    │ ║
+║                    │Gemini  │  │ Maps   │  │ MongoDB + │ ║
+║                    │2.5Flash│  │ API    │  │ Voyage AI │ ║
+║                    └────────┘  └────────┘  └───────────┘ ║
+║                         │           │                      ║
+║                    ┌────▼──┐  ┌─────▼──────────────────┐  ║
+║                    │Notify │  │   Surveillance Agent    │  ║
+║                    │Agent  │  │ Outbreak · Silent       │  ║
+║                    │grammY │  │ Pandemic · CHW Gaps     │  ║
+║                    │:3001  │  └─────────────────────────┘  ║
+║                    └───────┘          │                     ║
+║                               ┌───────▼──────────────┐     ║
+║                               │  Contact Tracing     │     ║
+║                               │  Agent               │     ║
+║                               └──────────────────────┘     ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -85,58 +82,47 @@ All of this happens in under 30 seconds, autonomously, while the CHV is still wi
 
 ### 🎤 Intake Agent
 
-_The gateway. No encounter enters the system without passing through here._
-
-Speaks 11 Kenyan languages including Dholuo, Swahili, Kikuyu, Somali, and English — plus code-switching between them. Accepts voice recordings, web forms, Telegram messages, or direct JSON from other agents. Returns a structured WHO IDSR clinical extraction in under 500ms.
+Multilingual clinical extraction from voice, web forms, or Telegram messages. Supports Dholuo, Swahili, Kikuyu, Somali, Luhya, Kamba, English and code-switching. Returns WHO IDSR clinical JSON with triage color in under 500ms.
 
 ### 📍 Geo Agent
 
-_Turns coordinates into context._
-
-Takes a GPS position and returns the full Kenyan administrative hierarchy (village → ward → sub-county → county), the three nearest health facilities with real driving times from Google Maps, and an alert flag if the case should trigger a referral. Never makes a routing decision without knowing where the patient actually is.
+GPS → full Kenyan admin hierarchy (village → ward → sub-county → county) + nearest facilities with real driving times. Never routes a referral without knowing exactly where the patient is.
 
 ### 💾 Data Agent
 
-_The memory of the swarm._
-
-Persists every encounter to MongoDB Atlas with a Voyage AI vector embedding (1024 dimensions, multilingual). Manages 7 collections: encounters, CHWs, alerts, follow-ups, protocols, referrals, and contact traces. Powers semantic search so clinicians can ask questions like _"show me cases similar to this presentation in Homa Bay over the last 3 months"_ and get meaningful results.
+MongoDB Atlas with Voyage AI multilingual embeddings (1024 dims). Manages 7 collections: encounters, CHWs, alerts, referrals, follow-ups, protocols, contact traces. Powers semantic search across all clinical records.
 
 ### 📊 Surveillance Agent
 
-_The epidemiological brain._
-
-Runs outbreak detection every 6 hours across all 47 counties — comparing case counts against 4-week rolling baselines. Also runs a daily **silent pandemic scan** that catches syndromes with a persistent upward trend before they ever hit a spike threshold. When it finds a signal, it automatically formulates a WHO/MoH response protocol and escalates through county → regional → national channels.
+Outbreak detection every 6 hours across 47 counties vs 4-week rolling baselines. Daily **silent pandemic scan** catches slowly growing threats before they spike. Automatically formulates WHO/MoH response protocols on alert.
 
 ### 📨 Notify Agent
 
-_The voice that calls for help._
-
-A Node.js/grammY Telegram bot that handles every outbound notification — CHV referral dispatches, outbreak alerts to district officers, CHW follow-up task assignments, and broadcast messages to county health channels. Also accepts inbound commands from CHVs: `/report`, `/followup`, `/protocol`, `/status`.
+Node.js/grammY Telegram bot. Handles referral dispatches, outbreak alerts, CHW follow-up reminders, and broadcast messages. CHVs interact via `/report`, `/followup`, `/protocol`, `/status`. Alert modals in the web dashboard include WhatsApp deep-link sharing.
 
 ### 🔗 Contact Tracing Agent
 
-_The exposure map._
-
-Every RED-triage encounter automatically triggers a contact trace. The agent pulls the index case, calculates the syndrome-specific exposure window (5 days for cholera, 8 for measles, 21 for VHF), searches for potential contacts in the same ward within that window, assigns CHWs to visit each one, and tracks every contact to resolution. Reports secondary attack rates back to the Surveillance Agent.
+Every RED encounter triggers an automatic contact trace. Calculates syndrome-specific exposure windows, maps potential contacts in the same ward, assigns CHW visits, tracks to resolution, reports secondary attack rates.
 
 ---
 
 ## Tech Stack
 
-| Layer               | Technology                                               |
-| ------------------- | -------------------------------------------------------- |
-| **Agent Framework** | Google ADK 1.26 (`google-adk`)                           |
-| **LLM**             | Gemini 2.5 Flash via Vertex AI                           |
-| **Embeddings**      | Voyage AI `voyage-3` (1024 dims, multilingual)           |
-| **Database**        | MongoDB Atlas M10 with Vector Search                     |
-| **Backend**         | Python 3.12 · FastAPI · uvicorn                          |
-| **Telegram Bot**    | Node.js 20 · grammY · Fastify                            |
-| **Frontend**        | Angular 20 · Angular Material 3                          |
-| **Mapping**         | Google Maps Platform (Places, Geocoding, Directions)     |
-| **Observability**   | Dynatrace via OpenTelemetry OTLP                         |
-| **Hosting**         | Google Cloud Run (backend) · Firebase Hosting (frontend) |
-| **Process Manager** | supervisord (uvicorn + Node.js in one container)         |
-| **CI/CD**           | Google Cloud Build                                       |
+| Layer            | Technology                            |
+| ---------------- | ------------------------------------- |
+| Agent Framework  | Google ADK 1.26                       |
+| LLM              | Gemini 2.5 Flash (Vertex AI)          |
+| Embeddings       | Voyage AI `voyage-3` (1024 dims)      |
+| Database         | MongoDB Atlas M10+ with Vector Search |
+| Backend          | Python 3.12 · FastAPI · uvicorn       |
+| Telegram Bot     | Node.js 20 · grammY · Fastify         |
+| Frontend         | Angular 20 · Angular Material 3       |
+| Mapping          | Google Maps Platform                  |
+| Observability    | Dynatrace via OpenTelemetry OTLP      |
+| Backend Hosting  | Google Cloud Run                      |
+| Frontend Hosting | Firebase Hosting                      |
+| Process Manager  | supervisord                           |
+| CI/CD            | Google Cloud Build                    |
 
 ---
 
@@ -145,67 +131,54 @@ Every RED-triage encounter automatically triggers a contact trace. The agent pul
 ```
 SihaLink/
 ├── agents/
-│   ├── orchestrator/     # FastAPI app + ADK root_agent + swarm controller
+│   ├── orchestrator/     # FastAPI app + ADK root_agent + swarm event bus
 │   ├── intake/           # Multilingual clinical extraction (Gemini Live)
 │   ├── geo/              # GPS enrichment (Google Maps)
 │   ├── data/             # MongoDB Atlas + Voyage AI embeddings
-│   ├── surveillance/     # Outbreak detection pipelines
+│   ├── surveillance/     # Outbreak detection + silent pandemic scan
 │   ├── notify/           # Telegram bot (TypeScript/grammY)
 │   └── contact_tracing/  # Exposure mapping + CHW task assignment
-├── frontend/             # Angular 20 dashboard (standalone components)
-│   └── src/
-│       ├── app/          # Components: dashboard, agents-ui, encounters
-│       └── services/     # API, agent services, alert broadcast (SSE)
-├── data/                 # Seed scripts + clinical dataset
-├── deploy/               # Dockerfile, supervisord, Cloud Build, service.yaml
-└── .env.example          # All required environment variables documented
+├── frontend/             # Angular 20 SPA
+│   └── src/app/
+│       ├── agents-ui/    # Per-agent UI panels
+│       ├── encounters/   # Case Encounters table (server-side pagination)
+│       └── dashboard/    # Live swarm dashboard
+├── data/                 # Seed scripts + clinical reference dataset
+├── deploy/               # supervisord.conf, deploy.sh, cloudbuild.yaml
+├── Dockerfile            # Multi-stage: Node build → Angular build → Python runtime
+├── firebase.json         # Firebase Hosting config (SPA rewrites)
+└── .env.example          # All environment variables documented
 ```
 
 ---
 
-## Key Features
+## Deployment
 
-**For Community Health Volunteers**
+**Backend — Google Cloud Run:**
 
-- Submit patient reports by voice in any Kenyan language
-- Receive instant triage guidance and referral confirmation via Telegram
-- Get overdue follow-up reminders automatically
-- Access WHO response protocols with one command: `/protocol cholera`
+```bash
+./deploy/deploy.sh --project kephothoagenticai --region us-central1
+```
 
-**For District Health Officers**
+**Frontend — Firebase Hosting:**
 
-- Live outbreak detection dashboard with county-level maps
-- Silent pandemic alerts for slowly growing threats
-- CHW activity gap reports — see which wards have gone dark
-- Cross-county spread detection with automatic escalation
+```bash
+cd frontend && npm run build:prod
+firebase deploy --only hosting --project kephothoagenticai
+```
 
-**For the System**
+**CI/CD — triggers automatically on push to `main`:**
 
-- Human-in-the-loop decision gate for every RED and YELLOW referral (60s timeout, then auto-escalates)
-- Offline queue — encounters are stored locally when the CHV has no signal, synced automatically on reconnect
-- SSE live alert stream to the dashboard — no polling
-- Full OpenTelemetry tracing into Dynatrace for every request
+```bash
+gcloud builds submit --config deploy/cloudbuild.yaml .
+```
 
----
-
-## Getting Started
-
-See **[QUICK_START.md](QUICK_START.md)** for the fastest path to a running local environment.
-
-For Cloud Run deployment, see **[CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md)**.
+See [QUICK_START.md](QUICK_START.md) for local development setup.
 
 ---
 
 ## License
 
-MIT License. Built with ❤️ for Kenya's Community Health Volunteers.
-
----
-
-<div align="center">
-
-**[GitHub](https://github.com/KephothoM/SihaLink.git)** · **[Quick Start](QUICK_START.md)** · **[Cloud Run Deploy](CLOUD_RUN_DEPLOYMENT.md)**
+MIT. Built with ❤️ for Kenya's Community Health Volunteers.
 
 _"Afya ni Haki" — Health is a Right_
-
-</div>

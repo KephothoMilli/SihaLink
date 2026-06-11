@@ -117,6 +117,27 @@ class NotifyAgentClient:
         try:
             import json
 
+            # Support direct custom-text dispatch (used by /notify/dispatch endpoint)
+            custom_text   = alert.pop("_custom_text",    None)
+            target_chat   = alert.pop("_recipient_chat", None)
+
+            if custom_text and target_chat:
+                # Direct single-recipient dispatch — POST to Telegram sendMessage API via bot
+                # We relay through the Node.js notify agent's /notify/message endpoint
+                payload_str = json.dumps(
+                    {"chat_id": target_chat, "text": custom_text},
+                    default=str,
+                )
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(
+                        f"{NOTIFY_BASE}/notify/message",
+                        content=payload_str,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    resp.raise_for_status()
+                    self._notify_down = False
+                    return resp.json()
+
             payload_str = json.dumps({"alert": alert}, default=str)
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
@@ -1098,6 +1119,7 @@ async def start_encounter(payload: Dict[str, Any], background_tasks: BackgroundT
             coords,
             form_data=form_data,
             telegram_payload=telegram_payload,
+            chw_id=chw_id,
         )
 
     return {"status": "processing", "session_id": session_id, "source": source}
@@ -1507,6 +1529,85 @@ async def api_route_to_notify(payload: Dict[str, Any]):
     else:
         result = {"delivered": False, "note": f"Unknown type: {notification_type}"}
     return {"status": "notified", "result": result}
+
+
+@app.post("/notify/dispatch")
+async def notify_dispatch(payload: Dict[str, Any]):
+    """
+    User-facing notification dispatch endpoint.
+    Accepts the natural UI shape and routes to Telegram for each recipient.
+
+    Body:
+        title       — alert title
+        message     — full message text
+        recipients  — list of Telegram chat IDs or phone numbers
+        priority    — low | medium | high | critical
+        encounter_id — optional linked encounter
+    """
+    title       = payload.get("title", "SihaLink Alert")
+    message     = payload.get("message", "")
+    recipients  = payload.get("recipients", [])
+    priority    = payload.get("priority", "medium")
+    encounter_id = payload.get("encounter_id", "")
+
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+    if not recipients:
+        raise HTTPException(status_code=400, detail="recipients list is required")
+
+    priority_emoji = {
+        "critical": "🔴",
+        "high":     "🟠",
+        "medium":   "🟡",
+        "low":      "🟢",
+    }.get(priority, "🟡")
+
+    text = (
+        f"{priority_emoji} *{title}*\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"{message}"
+    )
+    if encounter_id:
+        text += f"\n\n*Encounter:* `{encounter_id}`"
+
+    delivered_count = 0
+    failed = []
+    for recipient in recipients:
+        try:
+            # Try to parse as integer (Telegram chat ID) first
+            chat_id: Any = recipient
+            try:
+                chat_id = int(str(recipient).strip())
+            except ValueError:
+                pass  # keep as string (username or phone)
+
+            await notify_agent.dispatch_outbreak_alert({
+                "alert_id":   f"manual-{encounter_id or 'broadcast'}",
+                "syndrome":   title,
+                "location":   {"county": "Manual", "ward": "Dispatch"},
+                "count":      0,
+                "percent_above_baseline": 0,
+                "detected_at": "",
+                "status":     "active",
+                "risk_level": priority.upper(),
+                "recommended_actions": [message],
+                # Pass the pre-formatted text and target directly
+                "_custom_text":    text,
+                "_recipient_chat": chat_id,
+            })
+            delivered_count += 1
+        except Exception as exc:
+            logger.warning("Dispatch failed for recipient %s: %s", recipient, exc)
+            failed.append(str(recipient))
+
+    import time as _time
+    return _safe_serialize({
+        "notification_id":   f"notif-{int(_time.time())}",
+        "sent_at":           int(_time.time()),
+        "recipients_reached": delivered_count,
+        "failed_recipients":  failed,
+        "status":             "sent" if not failed else ("partial" if delivered_count else "failed"),
+    })
 
 
 # --- Mock Notification Endpoints for UI ---

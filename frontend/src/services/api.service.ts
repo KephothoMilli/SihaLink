@@ -447,7 +447,7 @@ export class ApiService {
     action_url?: string;
     metadata?: any;
   }) {
-    return this.post('/tool/route_to_notify', body);
+    return this.post('/notify/dispatch', body);
   }
 
   /** Get notification history for an encounter */
